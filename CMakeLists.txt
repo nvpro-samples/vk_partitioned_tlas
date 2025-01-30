@@ -16,7 +16,6 @@ set(NVPRO_GIT_TAG main)
 set(NVPRO_TGT_SRC_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_deps)
 
 if(NOT BASE_DIRECTORY)
-
   find_path(BASE_DIRECTORY
     NAMES nvpro_core/cmake/setup.cmake
     PATHS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CMAKE_CURRENT_SOURCE_DIR}/external
@@ -34,17 +33,29 @@ else()
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} 
     OUTPUT_VARIABLE GIT_REPO_URL OUTPUT_STRIP_TRAILING_WHITESPACE 
   ) 
-  # detect the git server domain and path to nvpro_core
-  string(REGEX MATCH "^[^/]+//[^/]+/" GIT_BASE_URL "${GIT_REPO_URL}")
-  # find the domain
-  string(FIND "${GIT_REPO_URL}" "github.com" index)
-  if (index GREATER -1)
-      set(NVPRO_GIT_URL ${GIT_BASE_URL}nvpro-samples/nvpro_core.git)
-      # message("Sample comes from github " ${NVPRO_GIT_URL} )
+  # Check if "github.com" is in URL
+  string(FIND "${GIT_REPO_URL}" "github.com" FOUND_INDEX)
+  if (FOUND_INDEX GREATER -1)
+    # Use regex to extract everything up to and including "github.com"
+    string(REGEX MATCH ".*github\\.com" GIT_BASE_URL "${GIT_REPO_URL}")
+    # construct URL
+    string(FIND "${GIT_REPO_URL}" "git@" SSH_FOUND_INDEX)
+    if (SSH_FOUND_INDEX GREATER -1) # ssh
+      set(NVPRO_GIT_URL ${GIT_BASE_URL}:nvpro-samples/nvpro_core.git)
+    else() # https
+      set(NVPRO_GIT_URL ${GIT_BASE_URL}/nvpro-samples/nvpro_core.git)
+    endif()
+    if("${NVPRO_GIT_TAG}" STREQUAL "main" )
+      set(NVPRO_GIT_TAG master)
+    endif()
+    message("Sample comes from github , nvprocore is at " ${NVPRO_GIT_URL} )
   else ()
-      set(NVPRO_GIT_URL ${GIT_BASE_URL}devtechproviz/nvpro-samples/nvpro_core.git)
-      # message("Sample comes from prod server " ${NVPRO_GIT_URL})
-  endif ()
+    # reconstruct the path to nvpro_core, preserving the protocol
+    string(REGEX MATCH "^[^/]+//[^/]+/" GIT_BASE_URL "${GIT_REPO_URL}")
+    # construct URL
+    set(NVPRO_GIT_URL ${GIT_BASE_URL}devtechproviz/nvpro-samples/nvpro_core.git)
+    # message("Sample comes from prod server, nvprocore is at " ${NVPRO_GIT_URL})
+  endif()
   # let's clone the commit we need, depth to 1 so that we do not download the full history
   execute_process( 
     COMMAND git clone --depth 1 --branch ${NVPRO_GIT_TAG} ${NVPRO_GIT_URL} ${CMAKE_CURRENT_BINARY_DIR}/_deps/nvpro_core
