@@ -109,7 +109,6 @@ enum InspectedBuffers
 #include "nvvkhl/element_profiler.hpp"
 
 
-#include "vk_nv_partitioned_acc.h"
 #include "partitioned_acceleration_structures.hpp"
 
 

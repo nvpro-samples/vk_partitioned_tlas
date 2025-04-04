@@ -92,15 +92,15 @@ struct VkPartitionedAccelerationStructureWriteInstanceDataNV
 ```
 A key difference is the `instanceIndex` member, that specifies the index of the instance so it may be referenced by a partition. Please note the buffer of `VkPartitionedAccelerationStructureWriteInstanceDataNV` *must not* contain duplicate `instanceIndex` (undefined behavior otherwise).
 
-Optionally a translation vector per partitions can be defined using the `VkPartitionedAccelerationStructureWritePartitionDataNV` structure so all instances within the partition will be additionally translated by that vector:
+Optionally a translation vector per partitions can be defined using the `VkPartitionedAccelerationStructureWritePartitionTranslationDataNV` structure so all instances within the partition will be additionally translated by that vector:
 ```
-struct VkPartitionedAccelerationStructureWritePartitionDataNV
+struct VkPartitionedAccelerationStructureWritePartitionTranslationDataNV
 {
   uint32_t        partitionIndex;
   float           partitionTranslation[3];
 }
 ```
-A buffer of `VkPartitionedAccelerationStructureWritePartitionDataNV` *must not* contain duplicate `partitionIndex` (undefined behavior otherwise). Such a buffer is *only* necessary if per-partition translation is enabled.
+A buffer of `VkPartitionedAccelerationStructureWritePartitionTranslationDataNV` *must not* contain duplicate `partitionIndex` (undefined behavior otherwise). Such a buffer is *only* necessary if per-partition translation is enabled.
 
 Once the instance data is uploaded, a regular TLAS only requires a call to `vkCmdBuildAccelerationStructuresKHR` with the appropriate instance counts etc. The PTLAS build calls are indirect and may apply to an arbitrary number of instances and partitions, hence all information must be available on device side to avoid synchronization. For this, build and update operations are defined in `VkBuildPartitionedAccelerationStructureIndirectCommandNV` structures, that will be uploaded on the device prior to the actual build. This structure defines the operation type, the number of arguments to the operation, and the address of the arguments:
 ```

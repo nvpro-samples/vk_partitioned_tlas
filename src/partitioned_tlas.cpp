@@ -94,8 +94,6 @@ void PartitionedTlasSample::onAttach(nvvkhl::Application* app)
   vkGetPhysicalDeviceProperties2(m_app->getPhysicalDevice(), &prop2);
 
 
-  load_VK_NV_partitioned_accleration_structure(m_app->getInstance(), m_app->getDevice());
-
 
 #ifdef USE_NVVK_INSPECTOR
   nvvkhl::ElementInspector::InitInfo inspectorInitInfo{};
@@ -477,7 +475,7 @@ int main(int argc, char** argv)
     VkContextSettings vkSetup;
     // Disable validation layers as they may pose issues with newer extensions
     vkSetup.enableValidationLayers = false;
-    vkSetup.apiVersion             = VK_API_VERSION_1_3;
+    vkSetup.apiVersion             = VK_API_VERSION_1_4;
 
     nvvkhl::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);

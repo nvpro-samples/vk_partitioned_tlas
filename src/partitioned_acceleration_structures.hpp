@@ -20,7 +20,6 @@
 
 #include "nvvk/buffers_vk.hpp"
 #include "nvvk/resourceallocator_vk.hpp"
-#include "vk_nv_partitioned_acc.h"
 #include "vulkan/vulkan_core.h"
 #include <sstream>
 
@@ -154,7 +153,7 @@ public:
     if(buildSizeQuery.allowPartitionTranslation)
     {
       buildSizes.partitionWriteInfoSize =
-          (buildSizeQuery.partitionCount + 1) * sizeof(VkPartitionedAccelerationStructureWritePartitionDataNV);
+          (buildSizeQuery.partitionCount + 1) * sizeof(VkPartitionedAccelerationStructureWritePartitionTranslationDataNV);
     }
     return buildSizes;
   }
@@ -169,7 +168,7 @@ public:
   void uploadPtlasData(nvvk::ResourceAllocator* alloc,
                        VkCommandBuffer          cmd,
                        const std::vector<VkPartitionedAccelerationStructureWriteInstanceDataNV>& instances,  // All instances to be stored in the PTLAS
-                       const std::vector<VkPartitionedAccelerationStructureWritePartitionDataNV>& partitions = {}  // (Optional) Per-partition translation vectors
+                       const std::vector<VkPartitionedAccelerationStructureWritePartitionTranslationDataNV>& partitions = {}  // (Optional) Per-partition translation vectors
   )
 
   {
@@ -202,10 +201,10 @@ public:
       {
         // Partition write
         srcOperations[1]                       = {};
-        srcOperations[1].opType                = VK_PARTITIONED_ACCELERATION_STRUCTURE_OP_TYPE_WRITE_PARTITION_NV;
+        srcOperations[1].opType                = VK_PARTITIONED_ACCELERATION_STRUCTURE_OP_TYPE_WRITE_PARTITION_TRANSLATION_NV;
         srcOperations[1].argCount              = uint32_t(partitions.size());
         srcOperations[1].argData.startAddress  = m_buffers.partitionWriteInfo.address;
-        srcOperations[1].argData.strideInBytes = sizeof(VkPartitionedAccelerationStructureWritePartitionDataNV);
+        srcOperations[1].argData.strideInBytes = sizeof(VkPartitionedAccelerationStructureWritePartitionTranslationDataNV);
       }
       uploadBuffer(alloc, cmd, m_buffers.operationsInfo, srcOperations);
     }
