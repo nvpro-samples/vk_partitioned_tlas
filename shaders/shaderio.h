@@ -17,8 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOST_DEVICE_H
-#define HOST_DEVICE_H
+#ifndef SHADERIO_H
+#define SHADERIO_H
 
 // Uncomment to use the nvvk InspectorElement class for realtime debugging
 // Since this involves memory readbacks, the performance hit can be significant when
@@ -37,7 +37,22 @@
 #include <string>
 #include <glm/glm.hpp>
 using namespace glm;
+namespace shaderio {
+
 #endif
+
+// Bindings for the PTLAS sample
+#define B_outImage 1
+#define B_frameInfo 2
+#define B_sceneDesc 3
+#define B_skyParam 4
+#define B_materials 5
+#define B_instances 6
+#define B_vertex 7
+#define B_index 8
+#define B_aoImage 9
+#define B_depthImage 10
+
 
 struct FrameInfo
 {
@@ -385,6 +400,9 @@ struct PushConstant
   float intensity;
   int   maxDepth;
 
+  uint64_t tlas;
+  uint64_t pad0;
+
   AnimationShaderData animationShaderData;
 };
 
@@ -399,5 +417,8 @@ struct AccelerationStructureInstance
   uint64_t accelerationStructureReference;
 };
 
+#ifdef __cplusplus
+}  // namespace shaderio
+#endif  // __cplusplus
 
-#endif  // HOST_DEVICE_H
+#endif  // SHADERIO_H

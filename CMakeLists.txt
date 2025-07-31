@@ -1,166 +1,92 @@
-cmake_minimum_required(VERSION 3.6...3.31)
-
-get_filename_component(PROJNAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
-Project(${PROJNAME})
-Message(STATUS "-------------------------------")
-Message(STATUS "Processing Project ${PROJNAME}:")
+cmake_minimum_required(VERSION 3.22...3.31)
+project(vk_partitioned_tlas VERSION 3.0 LANGUAGES C CXX)
 
 
-#####################################################################################
-# look for nvpro_core 1) as a sub-folder 2) at some other locations
-# this cannot be put anywhere else since we still didn't find setup.cmake yet
 
-# which nvprocore tag or branch to download if repo not found
-set(NVPRO_GIT_TAG main)
-# Where to decompress nvprocore source code if repo not found
-set(NVPRO_TGT_SRC_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/_deps)
+# Add the cmake folder to the module path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+find_package(NvproCore2 REQUIRED)
 
-if(NOT BASE_DIRECTORY)
-  find_path(BASE_DIRECTORY
-    NAMES nvpro_core/cmake/setup.cmake
-    PATHS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CMAKE_CURRENT_SOURCE_DIR}/external
-    DOC "Directory containing nvpro_core"
-    )
-endif()
-if(EXISTS ${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-  set(OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin_x64)
-  include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-else()
-  # nvpro_core not found, will try to download.
-  # first find where the current sample comes from
-  execute_process( 
-    COMMAND git config --get remote.origin.url 
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} 
-    OUTPUT_VARIABLE GIT_REPO_URL OUTPUT_STRIP_TRAILING_WHITESPACE 
-  ) 
-  # Check if "github.com" is in URL
-  string(FIND "${GIT_REPO_URL}" "github.com" FOUND_INDEX)
-  if (FOUND_INDEX GREATER -1)
-    # Use regex to extract everything up to and including "github.com"
-    string(REGEX MATCH ".*github\\.com" GIT_BASE_URL "${GIT_REPO_URL}")
-    # construct URL
-    string(FIND "${GIT_REPO_URL}" "git@" SSH_FOUND_INDEX)
-    if (SSH_FOUND_INDEX GREATER -1) # ssh
-      set(NVPRO_GIT_URL ${GIT_BASE_URL}:nvpro-samples/nvpro_core.git)
-    else() # https
-      set(NVPRO_GIT_URL ${GIT_BASE_URL}/nvpro-samples/nvpro_core.git)
-    endif()
-    if("${NVPRO_GIT_TAG}" STREQUAL "main" )
-      set(NVPRO_GIT_TAG master)
-    endif()
-    message("Sample comes from github , nvprocore is at " ${NVPRO_GIT_URL} )
-  else ()
-    # reconstruct the path to nvpro_core, preserving the protocol
-    string(REGEX MATCH "^[^/]+//[^/]+/" GIT_BASE_URL "${GIT_REPO_URL}")
-    # construct URL
-    set(NVPRO_GIT_URL ${GIT_BASE_URL}devtechproviz/nvpro-samples/nvpro_core.git)
-    # message("Sample comes from prod server, nvprocore is at " ${NVPRO_GIT_URL})
-  endif()
-  # let's clone the commit we need, depth to 1 so that we do not download the full history
-  execute_process( 
-    COMMAND git clone --depth 1 --branch ${NVPRO_GIT_TAG} ${NVPRO_GIT_URL} ${CMAKE_CURRENT_BINARY_DIR}/_deps/nvpro_core
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} 
-  ) 
-  # do the search again with downloaded version, use find to be sure everyting runs ok
-  find_path(BASE_DIRECTORY
-    NAMES nvpro_core
-    PATHS ${CMAKE_CURRENT_BINARY_DIR}/_deps
-    REQUIRED
-    DOC "Directory containing nvpro_core"
-    )
-  # invoke the setup
-  if(EXISTS ${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-    set(OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin_x64)
-    include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-  else()
-    message(FATAL_ERROR "could not find base directory or download nvpro_core, please set BASE_DIRECTORY to folder containing nvpro_core")
-  endif()
-endif()
-set(NVPRO_CORE_DIR ${BASE_DIRECTORY}/nvpro_core)
-
-_add_project_definitions(${PROJNAME})
+set(COMMON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/common")
 
 
-#####################################################################################
-# additions from packages needed for this sample
-# add refs  in LIBRARIES_OPTIMIZED
-# add refs  in LIBRARIES_DEBUG
-# add files in PACKAGE_SOURCE_FILES
+#------------------------------------------------------------------------------------------------------------------------------
+get_filename_component(PROJECT_NAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
 
-_add_package_VulkanSDK()
-_add_package_ShaderC()
-_add_package_IMGUI()
-_add_package_NVML()
+# Adding all sources
+file(GLOB EXE_SOURCES "src/*.cpp" "src/*.hpp")
 
-#####################################################################################
-# process the rest of some cmake code that needs to be done *after* the packages add
-_add_nvpro_core_lib()
 
-#####################################################################################
-# Source files for this project
-#
-file(GLOB SOURCE_FILES src/*.*)
-file(GLOB SHADER_FILES shaders/*.glsl shaders/*.h)
-file(GLOB SHADER_COMMON_FILES ${BASE_DIRECTORY}/nvpro_core/nvvkhl/shaders/*.h)
+source_group("Source Files" FILES ${EXE_SOURCES})
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/external)
+# Add the executable
+add_executable(${PROJECT_NAME} ${EXE_SOURCES})
 
-#####################################################################################
-# Executable
-#
 
-if(WIN32 AND NOT GLUT_FOUND)
-  add_definitions(/wd4996) #remove printf warning
-  add_definitions(/wd4244) #remove double to float conversion warning
-  add_definitions(/wd4305) #remove double to float truncation warning
-else()
-  add_definitions(-fpermissive)
-endif()
-add_executable(${PROJNAME} ${SOURCE_FILES} ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES} ${SHADER_FILES} ${SHADER_COMMON_FILES} ${MESHOPT_FILES} ${CSF_FILES} ${TTUCOMPRESS_FILES})
 
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJNAME})
-
-target_compile_definitions(${PROJNAME} PRIVATE NVPRO_CORE_DIR="${NVPRO_CORE_DIR}")
-#####################################################################################
-# common source code needed for this sample
-#
-source_group(common FILES 
-  ${COMMON_SOURCE_FILES}
-  ${PACKAGE_SOURCE_FILES}
+# Link libraries and include directories
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nvpro2::nvapp
+  nvpro2::nvgui
+  nvpro2::nvutils
+  nvpro2::nvvk
+  nvpro2::nvshaders_host
+  nvpro2::nvaftermath
+  nvpro2::nvvkglsl
+  nvpro2::nvgpu_monitor
 )
-source_group("Shader Files" FILES ${SHADER_FILES})
-source_group("Shader Files/common" FILES ${SHADER_COMMON_FILES})
-source_group("Source Files" FILES ${SOURCE_FILES})
 
-if(UNIX)
-  set(UNIXLINKLIBS dl pthread)
-else()
-  set(UNIXLINKLIBS)
-endif()
+
+add_project_definitions(${PROJECT_NAME})
+
+# Include directory for generated files
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    ${CMAKE_BINARY_DIR} 
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/shaders
+)
+
+#------------------------------------------------------------------------------------------------------------------------------
+# Compile shaders
+file(GLOB SHADER_GLSL_FILES "shaders/*.glsl")
+file(GLOB SHADER_H_FILES "shaders/*.h")
+
+set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_LIST_DIR}/_autogen")
+
+compile_glsl(
+   "${SHADER_GLSL_FILES}"
+   "${SHADER_OUTPUT_DIR}"
+   GENERATED_SHADER_GLSL_HEADERS
+   EXTRA_FLAGS "-I${NVSHADERS_DIR};-I${COMMON_DIR}"
+ )
+
+# Add shader files to the project
+source_group("Shaders" FILES ${SHADER_SLANG_FILES} ${SHADER_GLSL_FILES} ${SHADER_H_FILES})
+source_group("Shaders/Compiled" FILES ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS})
+
+# Add the output shader headers (target) directly to the executable
+# This allows to compile the shaders when the executable is built
+target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_SHADER_SLANG_HEADERS} ${GENERATED_SHADER_GLSL_HEADERS} ${SHADER_H_FILES})
+
+
+
+
 
 #####################################################################################
-# Linkage
-#
+# Installation, copy files for runtime
+copy_to_runtime_and_install(${PROJECT_NAME}
+  DIRECTORIES "${NVSHADERS_DIR}/nvshaders"
+  FILES ${NsightAftermath_DLLS}
+  LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders" 
+  AUTO
+)
 
-target_link_libraries(${PROJNAME} ${PLATFORM_LIBRARIES} nvpro_core)
 
-foreach(DEBUGLIB ${LIBRARIES_DEBUG})
-  target_link_libraries(${PROJNAME} debug ${DEBUGLIB})
-endforeach(DEBUGLIB)
 
-foreach(RELEASELIB ${LIBRARIES_OPTIMIZED})
-  target_link_libraries(${PROJNAME} optimized ${RELEASELIB})
-endforeach(RELEASELIB)
+# Make Visual Studio use this project as the startup project
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 
-#####################################################################################
-# copies binaries that need to be put next to the exe files (ZLib, etc.)
-#
+# Install the resources and nvshaders folders
+install(DIRECTORY "${NVSHADERS_DIR}/nvshaders" DESTINATION ${CMAKE_INSTALL_PREFIX})
 
-_finalize_target( ${PROJNAME} )
-
-install(FILES ${SHADER_FILES} CONFIGURATIONS Release DESTINATION "bin_${ARCH}/GLSL_${PROJNAME}")
-install(FILES ${SHADER_FILES} CONFIGURATIONS Debug DESTINATION "bin_${ARCH}_debug/GLSL_${PROJNAME}")
-install(FILES ${SHADER_COMMON_FILES} CONFIGURATIONS Release DESTINATION "bin_${ARCH}/GLSL_${PROJNAME}/nvvkhl/shaders")
-install(FILES ${SHADER_COMMON_FILES} CONFIGURATIONS Debug DESTINATION "bin_${ARCH}_debug/GLSL_${PROJNAME}/nvvkhl/shaders")
 

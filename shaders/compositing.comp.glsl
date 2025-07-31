@@ -33,8 +33,7 @@
 #extension GL_EXT_shader_atomic_float : enable
 #extension GL_EXT_control_flow_attributes2 : enable
 
-#include "device_host.h"
-#include "dh_bindings.h"
+#include "shaderio.h"
 
 layout(push_constant) uniform CompositingPushConstant_
 {
@@ -132,9 +131,9 @@ void main()
     vec4 imagePixel = imageLoad(image, coord);
     int  halfWindow = 20;
 
-    vec4  centerAoPixel = imageLoad(imageAO, coord);
-    float centerId      = centerAoPixel.w;
-    if(centerId == 1.f)
+    vec4     centerAoPixel = imageLoad(imageAO, coord);
+    uint32_t centerId      = floatBitsToUint(centerAoPixel.w);
+    if(centerId == 255)
     {
       return;
     }
@@ -159,8 +158,8 @@ void main()
         {
           continue;
         }
-        float localAoPixel = imageLoad(image, localCoord).w;
-        float localId      = imageLoad(imageAO, localCoord).w;
+        float    localAoPixel = imageLoad(image, localCoord).w;
+        uint32_t localId      = floatBitsToUint(imageLoad(imageAO, localCoord).w);
         if(localId == centerId)
         {
           float maxDist     = sqrt(2.f * halfWindow * halfWindow);
@@ -194,9 +193,9 @@ void main()
   {
     float centerDepth = imageLoad(imageDepth, coord).x;
 
-    vec4  centerAoPixel = imageLoad(imageAO, coord);
-    float centerId      = centerAoPixel.w;
-    vec4  centerPixel   = imageLoad(image, coord);
+    vec4     centerAoPixel = imageLoad(imageAO, coord);
+    uint32_t centerId      = floatBitsToUint(centerAoPixel.w);
+    vec4     centerPixel   = imageLoad(image, coord);
 
     bool isEdge = false;
 
@@ -220,8 +219,8 @@ void main()
           continue;
         }
         testCount++;
-        vec4  localAoPixel = imageLoad(imageAO, localCoord);
-        float localId      = localAoPixel.w;
+        vec4     localAoPixel = imageLoad(imageAO, localCoord);
+        uint32_t localId      = floatBitsToUint(localAoPixel.w);
         if(localId < centerId || (centerDepth < 10.f && localId != centerId))
         {
           isEdge = true;
@@ -238,7 +237,7 @@ void main()
     float edgeValue = edgesFound > 0 ? 0.f : 1.f;
 
     imageStore(image, coord, vec4(centerPixel.xyz, edgeValue));
-    imageStore(imageAO, coord, vec4(centerPixel.xyz, centerId));
+    imageStore(imageAO, coord, vec4(centerPixel.xyz, uintBitsToFloat(centerId)));
 
     return;
   }
@@ -249,8 +248,6 @@ void main()
 
     float centerDepth   = imageLoad(imageDepth, coord).x;
     vec4  centerAoPixel = imageLoad(imageAO, coord);
-    float centerId      = centerAoPixel.w;
-
 
     const float numGrays = 10;
     vec3        median   = medianFilter(coord);

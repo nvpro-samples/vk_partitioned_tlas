@@ -17,44 +17,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #version 460
-#extension GL_EXT_ray_tracing : require
-#extension GL_GOOGLE_include_directive : enable
-#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-#extension GL_EXT_scalar_block_layout : require
-#extension GL_EXT_buffer_reference : require
 
-#include "device_host.h"
-#include "payload.h"
-#include "dh_bindings.h"
-#include "nvvkhl/shaders/random.h"
-#include "nvvkhl/shaders/constants.h"
+#extension GL_GOOGLE_include_directive : enable
+#include "raytrace_common.h"
 
 // clang-format off
 layout(location = 0) rayPayloadEXT HitPayload payload;
 
-layout(set = 0, binding = B_tlas) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = B_outImage, rgba32f) uniform image2D image;
-layout(set = 0, binding = B_aoImage, rgba32f) uniform image2D imageAO;
-layout(set = 0, binding = B_depthImage, r32f) uniform image2D imageDepth;
-layout(set = 0, binding = B_frameInfo, scalar) uniform FrameInfo_ { FrameInfo frameInfo; };
-// clang-format on
-
-layout(push_constant) uniform RtxPushConstant_
-{
-  PushConstant pc;
-};
-
-
-layout(buffer_reference, scalar) readonly buffer AnimationStateBuffer
-{
-  AnimationState s[];
-};
-
-layout(buffer_reference, scalar) readonly buffer AnimationGlobalStateBuffer
-{
-  AnimationGlobalState s;
-};
 
 void main()
 {
@@ -81,17 +50,17 @@ void main()
       const float tMin     = 0.001;
       const float tMax     = INFINITE;
 
-      traceRayEXT(topLevelAS,    // acceleration structure
-                  rayFlags,      // rayFlags
-                  0xFF,          // cullMask
-                  0,             // sbtRecordOffset
-                  0,             // sbtRecordStride
-                  0,             // missIndex
-                  rayOrigin,     // ray origin
-                  tMin,          // ray min range
-                  rayDirection,  // ray direction
-                  tMax,          // ray max range
-                  0              // payload (location = 0)
+      traceRayEXT(accelerationStructureEXT(pc.tlas),  // acceleration structure
+                  rayFlags,                           // rayFlags
+                  0xFF,                               // cullMask
+                  0,                                  // sbtRecordOffset
+                  0,                                  // sbtRecordStride
+                  0,                                  // missIndex
+                  rayOrigin,                          // ray origin
+                  tMin,                               // ray min range
+                  rayDirection,                       // ray direction
+                  tMax,                               // ray max range
+                  0                                   // payload (location = 0)
       );
       result += payload.color.xyz;
       aoResult += payload.primary.xyz;
@@ -103,7 +72,8 @@ void main()
 
   imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(result, payload.ao));
 
-  float hitId = (primaryHitId & 0xFF) / 255.f;
+  //float hitId = (primaryHitId & 0xFF) / 255.f;
+  float hitId = uintBitsToFloat(primaryHitId & 0xFF);
   imageStore(imageAO, ivec2(gl_LaunchIDEXT.xy), vec4(aoResult, hitId));
   imageStore(imageDepth, ivec2(gl_LaunchIDEXT.xy), vec4(payload.primaryDepth, 0.f, 0.f, 0.f));
 }

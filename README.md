@@ -1,10 +1,10 @@
 # vk_partitioned_tlas
 
-This sample illustrates partial TLAS updates using the `VK_NV_partitioned_tlas` extension. 
+This sample illustrates partial TLAS updates using the `VK_NV_partitioned_acceleration_structure` extension. 
 
 ![partitioned TLAS diagram](docs/partitioned_tlas.png)
 
-The app procedurally lays out 1.9 million dominoes on a board made of 11 million static objects, where dominoes board objects are assigned to partitions defined by a uniform 2D grid. Upon running the (wildly inaccurate) physics simulation, only the currently moving instances are updated in the partitioned acceleration structure (PTLAS). The corresponding partitions are highlighed by saturated colors on the ground plane. The domino colors illustrate which partition they are part of. The color of the partitions are random for illustration purposes.
+The app procedurally lays out 170000 dominoes on a board made of 1.2 million static objects, where dominoes board objects are assigned to partitions defined by a uniform 2D grid. Upon running the (wildly inaccurate) physics simulation, only the currently moving instances are updated in the partitioned acceleration structure (PTLAS). The corresponding partitions are highlighed by saturated colors on the ground plane. The domino colors illustrate which partition they are part of. The color of the partitions are random for illustration purposes.
 
 ![partitioned TLAS demo](docs/demo_ptlas.png)
 
@@ -20,9 +20,8 @@ Usage:
 - The physics simulation can be started using the Play button, which will automatically topple a number of dominoes. Specific dominoes can be toppled using a mouse right-click. The animation is reset using the Stop button. 
 - The size of the domino board and the number of partitions can be dynamically changed. The new values are taken into account after clicking on the "Regenerate scene" button.
 
-Notes:
+Note:
 - The domino generation uses STL and is not entirely multithreaded. It may become slow when generating large boards with Debug builds.
-- The current driver version requires clusters (VK_NV_cluster_acceleration_structure) to be requested when compiling the raytracing pipelines. While the extension itself may not be active at the instance level, it has to be requested in the pNext member of `VkRayTracingPipelineCreateInfoKHR`.
 
 ## Files
 
@@ -34,16 +33,14 @@ Notes:
 - `partitioned_tlas_pipelines.cpp` Creation of raytracing and compute pipelines
 - `partitioned_tlas_scene.cpp` Scene creation and domino layout
 - `partitioned_tlas_ui.cpp` User interface
-- `vk_NV_partitioned_acc.h/cpp` Definition of the `VK_NV_partitioned_tlas` extension
 
 ### Shader Files
 - `animation_init.comp.glsl` Initialization of the data structure for physics simulation and of the PTLAS structures if needed
 - `animation_physics.comp.glsl` Physics simulation, mark dominoes and partitions for updates, and update the regular TLAS instances (only if TLAS is enabled)
 - `animation_update_instances.comp.glsl` Rewrite the toppling PTLAS instances, and rewrite the per-instance partition indices if needed to move dominoes to/from the global partition
 - `compositing.comp.glsl` Simplistic AO denoising and toon shading
-- `device_host.h` Definition of the structures used in both host and device code
-- `dh_bindings.h` Definition of the shader binding indices, used in both host and device code
-- `gl_NV_partitioned_acc.h` GLSL counterpart of the structures defined in the `VK_NV_partitioned_tlas` extension, used when preparing the PTLAS update buffers in `animation.comp.glsl`
+- `shaderio.h` Definition of the structures and binding indices used in both host and device code
+- `gl_NV_partitioned_acc.h` GLSL counterpart of the structures defined in the `VK_NV_partitioned_acceleration_structure` extension, used when preparing the PTLAS update buffers in `animation.comp.glsl`
 - `payload.h` Definition of the ray payload
 - `raytrace.rchit.glsl` Closest-hit ray tracing shader, uses simplistic recursive ray tracing. Also contains code for domino topple triggers and partition highights
 - `raytrace.rgen.glsl` Ray generation shader
@@ -55,7 +52,7 @@ From a shader perspective TLAS and PTLAS are referenced identically as an `accel
 
 The acceleration structure building code is defined in `partitioned_tlas_acceleration_structure.cpp`. The regular TLAS is built in the `createTopLevelAS` function. The instances themselves are provided in a device-side buffer, and the build information such as the number of instances, flags etc. are defined on host side. In order to call the `vkCmdBuildAccelerationStructuresKHR` function the build information has to be known on the host at the moment of the call. The build will then update the entire TLAS using the contents of the instances buffer. 
 
-The partitioned TLAS build code is defined in `createPartitionedTopLevelAS`, using helper functions from `partitioned_acceleration_structures.hpp`. In contrast with the regular TLAS, all calls are indirect, meaning no build information has to be synchronized on the host in order to trigger an acceleration structure build or update. The remainder of this section will focus on the contents of the helper functions, which directly use the `VK_NV_partitioned_tlas` extension.
+The partitioned TLAS build code is defined in `createPartitionedTopLevelAS`, using helper functions from `partitioned_acceleration_structures.hpp`. In contrast with the regular TLAS, all calls are indirect, meaning no build information has to be synchronized on the host in order to trigger an acceleration structure build or update. The remainder of this section will focus on the contents of the helper functions, which directly use the `VK_NV_partitioned_acceleration_structure` extension.
 
 In a way similar to the TLAS, we first need to estimate how much memory will be required to generate and store the resulting PTLAS. The `vkGetPartitionedAccelerationStructuresBuildSizesNV` takes in particular the total number of instances and partitions, and the maximum number of instances any single partition may hold. The helper function `PartitionedAccelerationStructures::getBuildSizes` also takes additional information such as the maximum number of PTLAS update operations that may be performed simultaneously, and whether instances and partitions may be updated (more details on those below). From this information the helper struct `PartitionedAccelerationStructures::BuildSizeInfo` will contain the sizes of all the buffers required to generate and store the PTLAS, along with the sizes of the buffers containing the instance, partition and build operation definitions. The application is then responsible for allocating those buffers and providing a helper structure `PartitionedAccelerationStructures::Buffers` to the builder class. 
 

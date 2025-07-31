@@ -17,11 +17,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
-
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/resourceallocator_vk.hpp"
-#include "vulkan/vulkan_core.h"
 #include <sstream>
+
+#include "vulkan/vulkan_core.h"
+#include "nvvk/resource_allocator.hpp"
+#include "nvvk/staging.hpp"
 
 namespace nvvk {
 
@@ -165,21 +165,22 @@ public:
   const Buffers& getBuffers() const { return m_buffers; }
 
   // Write instance and partition data from host-side storage. Each partition is defined by an entry in partitionData, with its set of instances. The partition ID is directly deduced from the index in partitionData.
-  void uploadPtlasData(nvvk::ResourceAllocator* alloc,
-                       VkCommandBuffer          cmd,
+  void uploadPtlasData(nvvk::StagingUploader* stagingUploader,
+                       VkCommandBuffer        cmd,
                        const std::vector<VkPartitionedAccelerationStructureWriteInstanceDataNV>& instances,  // All instances to be stored in the PTLAS
-                       const std::vector<VkPartitionedAccelerationStructureWritePartitionTranslationDataNV>& partitions = {}  // (Optional) Per-partition translation vectors
+                       const std::vector<VkPartitionedAccelerationStructureWritePartitionTranslationDataNV>& partitions = {}
+                       // (Optional) Per-partition translation vectors
   )
 
   {
     uint32_t instanceCount = m_inputInfo.instanceCount;
 
 
-    uploadBuffer(alloc, cmd, m_buffers.instanceWriteInfo, instances);
+    uploadBuffer(stagingUploader, cmd, m_buffers.instanceWriteInfo, instances);
 
     if(!partitions.empty())
     {
-      uploadBuffer(alloc, cmd, m_buffers.partitionWriteInfo, partitions);
+      uploadBuffer(stagingUploader, cmd, m_buffers.partitionWriteInfo, partitions);
     }
 
     uint32_t operationCount = partitions.empty() ? 1 : 2;
@@ -200,14 +201,15 @@ public:
       if(operationCount > 1)
       {
         // Partition write
-        srcOperations[1]                       = {};
-        srcOperations[1].opType                = VK_PARTITIONED_ACCELERATION_STRUCTURE_OP_TYPE_WRITE_PARTITION_TRANSLATION_NV;
-        srcOperations[1].argCount              = uint32_t(partitions.size());
-        srcOperations[1].argData.startAddress  = m_buffers.partitionWriteInfo.address;
+        srcOperations[1]          = {};
+        srcOperations[1].opType   = VK_PARTITIONED_ACCELERATION_STRUCTURE_OP_TYPE_WRITE_PARTITION_TRANSLATION_NV;
+        srcOperations[1].argCount = uint32_t(partitions.size());
+        srcOperations[1].argData.startAddress = m_buffers.partitionWriteInfo.address;
         srcOperations[1].argData.strideInBytes = sizeof(VkPartitionedAccelerationStructureWritePartitionTranslationDataNV);
       }
-      uploadBuffer(alloc, cmd, m_buffers.operationsInfo, srcOperations);
+      uploadBuffer(stagingUploader, cmd, m_buffers.operationsInfo, srcOperations);
     }
+    stagingUploader->cmdUploadAppended(cmd);
   }
 
   // Build/Update the PTLAS, either from scratch or from the existing PTLAS
@@ -249,12 +251,13 @@ public:
   }
 
 private:
-  template <typename T>
-  void uploadBuffer(nvvk::ResourceAllocator* alloc, VkCommandBuffer cmd, const nvvk::Buffer& dst, const std::vector<T>& src)
+  template <typename T, typename bufferType>
+  void uploadBuffer(nvvk::StagingUploader* stagingUploader, VkCommandBuffer cmd, const bufferType& dst, const std::vector<T>& src)
   {
     if(src.size() > 0 && dst.buffer != VK_NULL_HANDLE)
     {
-      alloc->getStaging()->cmdToBuffer(cmd, dst.buffer, 0, src.size() * sizeof(T), src.data());
+      // alloc->getStaging()->cmdToBuffer(cmd, dst.buffer, 0, src.size() * sizeof(T), src.data());
+      stagingUploader->appendBuffer(dst, 0, std::span(src));
     }
   }
 

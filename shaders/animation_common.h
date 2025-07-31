@@ -26,7 +26,7 @@
 #extension GL_EXT_shader_atomic_float : enable
 #extension GL_EXT_control_flow_attributes2 : enable
 
-#include "device_host.h"
+#include "shaderio.h"
 
 layout(push_constant) uniform AnimationPushConstant_
 {

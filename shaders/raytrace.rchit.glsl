@@ -19,54 +19,11 @@
 
 
 #version 460
-#extension GL_EXT_ray_tracing : require
-#extension GL_EXT_nonuniform_qualifier : enable
-#extension GL_EXT_scalar_block_layout : enable
 #extension GL_GOOGLE_include_directive : enable
-#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
-#extension GL_EXT_buffer_reference2 : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int32 : enable
+#include "raytrace_common.h"
 
-#include "device_host.h"
-#include "dh_bindings.h"
-#include "payload.h"
-#include "nvvkhl/shaders/constants.h"
-#include "nvvkhl/shaders/dh_sky.h"
-#include "nvvkhl/shaders/func.h"
-#include "nvvkhl/shaders/ggx.h"
-#include "nvvkhl/shaders/random.h"
-
-hitAttributeEXT vec2 attribs;
-
-// clang-format off
 layout(location = 0) rayPayloadInEXT HitPayload payload;
-
-layout(set = 0, binding = B_tlas ) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = B_frameInfo, scalar) uniform FrameInfo_ { FrameInfo frameInfo; };
-layout(set = 0, binding = B_skyParam,  scalar) uniform SkyInfo_ { SimpleSkyParameters skyInfo; };
-layout(set = 0, binding = B_materials, scalar) buffer Materials_ { vec4 m[]; } materials;
-layout(set = 0, binding = B_instances, scalar) buffer InstanceInfo_ { InstanceInfo i[]; } instanceInfo;
-layout(set = 0, binding = B_vertex, scalar) buffer Vertex_ { Vertex v[]; } vertices[];
-layout(set = 0, binding = B_index, scalar) buffer Index_ { uvec3 i[]; } indices[];
-
-layout(push_constant) uniform RtxPushConstant_ { PushConstant pc; };
-
-layout(buffer_reference, scalar) readonly buffer AnimationStateBuffer
-{
-  AnimationState s[];
-};
-
-layout(buffer_reference, scalar) readonly buffer AnimationGlobalStateBuffer
-{
-  AnimationGlobalState s;
-};
-
-layout(buffer_reference, scalar) readonly buffer PartitionStateBuffer
-{
-  PartitionState s[];
-};
-
-// clang-format on
+hitAttributeEXT vec2 attribs;
 
 vec3 getPartitionPosition(uint32_t partitionId)
 {
@@ -134,7 +91,7 @@ bool shadowRay(vec3 P, vec3 L, float tmax)
 {
   const uint rayFlags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsCullBackFacingTrianglesEXT;
   HitPayload savedP = payload;
-  traceRayEXT(topLevelAS, rayFlags, 0xFF, 0, 0, 0, P, 0.001, L, tmax, 0);
+  traceRayEXT(accelerationStructureEXT(pc.tlas), rayFlags, 0xFF, 0, 0, 0, P, 0.001, L, tmax, 0);
   bool visible = (payload.depth == MISS_DEPTH);
   payload      = savedP;
   return visible;
@@ -146,7 +103,7 @@ bool shadowRay(vec3 P, vec3 L, float tmax)
 
 float ggxSmithVisibility(float NdotL, float NdotV, float alphaRoughness)
 {
-  alphaRoughness = max(alphaRoughness, GGX_MIN_ALPHA_ROUGHNESS);
+  alphaRoughness         = max(alphaRoughness, GGX_MIN_ALPHA_ROUGHNESS);
   float alphaRoughnessSq = alphaRoughness * alphaRoughness;
 
   float ggxV = NdotL * sqrt(NdotV * NdotV * (1.0F - alphaRoughnessSq) + alphaRoughnessSq);
@@ -156,7 +113,7 @@ float ggxSmithVisibility(float NdotL, float NdotV, float alphaRoughness)
 }
 float ggxDistribution(float NdotH, float alphaRoughness)  // alphaRoughness    = roughness * roughness;
 {
-  if (NdotH < 0.0f)
+  if(NdotH < 0.0f)
   {
     return 0.0f;
   }
@@ -164,7 +121,7 @@ float ggxDistribution(float NdotH, float alphaRoughness)  // alphaRoughness    =
   float alphaSqr = alphaRoughness * alphaRoughness;
 
   float NdotHSqr = NdotH * NdotH;
-  float denom = NdotHSqr * (alphaSqr - 1.0F) + 1.0F;
+  float denom    = NdotHSqr * (alphaSqr - 1.0F) + 1.0F;
 
   return alphaSqr / (M_PI * denom * denom);
 }
@@ -207,8 +164,8 @@ vec3 uintToColor(uint cellId)
 
 float ambientOcclusion(vec3 wPos, vec3 wNormal, uint32_t sampleCount, uint32_t sampleOffset)
 {
-  vec3     normal = wNormal;
-  vec3     tangent, bitangent;
+  vec3 normal = wNormal;
+  vec3 tangent, bitangent;
   orthonormalBasis(normal, tangent, bitangent);
 
   // FIXME: breaks low-discrepancy sequence
@@ -218,10 +175,10 @@ float ambientOcclusion(vec3 wPos, vec3 wNormal, uint32_t sampleCount, uint32_t s
 
   for(uint32_t i = 0; i < sampleCount; i++)
   {
-    float r1 = rand(seed);
-    float r2 = rand(seed);
-    vec3 wDirection = cosineSampleHemisphere(r1, r2);
-    wDirection      = wDirection.x * tangent + wDirection.y * bitangent + wDirection.z * normal;
+    float r1         = rand(seed);
+    float r2         = rand(seed);
+    vec3  wDirection = cosineSampleHemisphere(r1, r2);
+    wDirection       = wDirection.x * tangent + wDirection.y * bitangent + wDirection.z * normal;
     if(!shadowRay(wPos, wDirection, 5.f))
     {
       occlusion++;
@@ -264,12 +221,13 @@ void main()
     return;
   }
 
+
   vec3 P = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
   vec3 D = normalize(gl_WorldRayDirectionEXT);
   vec3 V = -D;
 
   // Vector to the light
-  vec3 L = normalize(skyInfo.directionToLight);
+  vec3 L = normalize(skyInfo.sunDirection);
   // Compute hard shadows
   bool visible = shadowRay(P, L, 1e34f);
 
@@ -435,12 +393,13 @@ void main()
   {
     payload.color = vec3(0);
     // Reflection
-    vec3 refl_dir = reflect(D, hit.nrm);
+    vec3 reflectedDirection = reflect(D, hit.nrm);
 
     payload.depth += 1;
     payload.weight *= metallic;  // more or less reflective
 
-    traceRayEXT(topLevelAS, gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.0001, refl_dir, 100.0, 0);
+    traceRayEXT(accelerationStructureEXT(pc.tlas), gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.0001,
+                reflectedDirection, 100.0, 0);
     col += payload.color;
   }
   // For every 10th domino, or if the object is transparent, compute a very simplistic refraction
@@ -476,7 +435,8 @@ void main()
       payload.weight *= pc.metallic;  // more or less reflective
     }
     // Trace the reflected ray
-    traceRayEXT(topLevelAS, gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.001, reflectedDirection, 100.0, 0);
+    traceRayEXT(accelerationStructureEXT(pc.tlas), gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, 0, 0, 0, P, 0.001,
+                reflectedDirection, 100.0, 0);
 
     col = col * 0.2f + payload.color;
   }

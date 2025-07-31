@@ -18,8 +18,11 @@
  */
 
 #include "partitioned_tlas.hpp"
-#include "nvh/parallel_work.hpp"
+#include "nvutils/parallel_work.hpp"
 #include <random>
+#include "glm/ext/scalar_constants.hpp"
+#include "nvshaders_host/sky.hpp"
+
 
 // Compute a quaternion to orient a domino along the derivative of the curve
 glm::quat computeQuaternion(const glm::vec2& derivative)
@@ -42,10 +45,10 @@ glm::quat computeQuaternion(const glm::vec2& derivative)
 uint32_t computeSegmentRequirements(uint32_t index, const std::vector<glm::vec3>& cp, float spacing)
 {
   // indices of the relevant control points
-  int i0 = glm::clamp<int>(index - 1, 0, int(cp.size() - 1));
-  int i1 = glm::clamp<int>(index, 0, int(cp.size() - 1));
-  int i2 = glm::clamp<int>(index + 1, 0, int(cp.size() - 1));
-  int i3 = glm::clamp<int>(index + 2, 0, int(cp.size() - 1));
+  int32_t i0 = glm::clamp<int32_t>(index - 1, 0, int32_t(cp.size() - 1));
+  int32_t i1 = glm::clamp<int32_t>(index, 0, int32_t(cp.size() - 1));
+  int32_t i2 = glm::clamp<int32_t>(index + 1, 0, int32_t(cp.size() - 1));
+  int32_t i3 = glm::clamp<int32_t>(index + 2, 0, int32_t(cp.size() - 1));
 
   glm::vec3 from = cp[i1];
   glm::vec3 to   = cp[i2];
@@ -61,10 +64,10 @@ uint32_t computeSegmentRequirements(uint32_t index, const std::vector<glm::vec3>
 void sampleSegment(uint32_t index, const std::vector<glm::vec3>& cp, float spacing, std::vector<glm::vec3>& res)
 {
   // indices of the relevant control points
-  int i0 = glm::clamp<int>(index - 1, 0, int(cp.size() - 1));
-  int i1 = glm::clamp<int>(index, 0, int(cp.size() - 1));
-  int i2 = glm::clamp<int>(index + 1, 0, int(cp.size() - 1));
-  int i3 = glm::clamp<int>(index + 2, 0, int(cp.size() - 1));
+  int32_t i0 = glm::clamp<int32_t>(index - 1, 0, int32_t(cp.size() - 1));
+  int32_t i1 = glm::clamp<int32_t>(index, 0, int32_t(cp.size() - 1));
+  int32_t i2 = glm::clamp<int32_t>(index + 1, 0, int32_t(cp.size() - 1));
+  int32_t i3 = glm::clamp<int32_t>(index + 2, 0, int32_t(cp.size() - 1));
 
   glm::vec3 from = cp[i1];
   glm::vec3 to   = cp[i2];
@@ -83,7 +86,7 @@ void sampleSegment(uint32_t index, const std::vector<glm::vec3>& cp, float spaci
 
 
 // Function to rotate and flip the coordinates based on Hilbert curve rules
-void rot(int n, int* x, int* y, int rx, int ry)
+void rot(int n, int32_t* x, int32_t* y, int32_t rx, int32_t ry)
 {
   if(ry == 0)
   {
@@ -100,23 +103,23 @@ void rot(int n, int* x, int* y, int rx, int ry)
 }
 
 // Function to convert t to a point on Hilbert curve at level n
-glm::vec2 hilbertCurvePoint(float t, int n)
+glm::vec2 hilbertCurvePoint(float t, int32_t n)
 {
-  int N = 1 << n;                       // 2^n, the dimension of the Hilbert curve grid
-  int d = static_cast<int>(t * N * N);  // Map t to an integer index in the Hilbert curve
+  int32_t N = 1 << n;              // 2^n, the dimension of the Hilbert curve grid
+  int32_t d = int32_t(t * N * N);  // Map t to an integer index in the Hilbert curve
 
-  int x = 0, y = 0;
-  for(int s = 1; s < N; s *= 2)
+  int32_t x = 0, y = 0;
+  for(int32_t s = 1; s < N; s *= 2)
   {
-    int rx = (d / 2) % 2;
-    int ry = (d ^ rx) % 2;
+    int32_t rx = (d / 2) % 2;
+    int32_t ry = (d ^ rx) % 2;
     rot(s, &x, &y, rx, ry);
     x += s * rx;
     y += s * ry;
     d /= 4;
   }
 
-  return glm::vec2(static_cast<float>(x) / N, static_cast<float>(y) / N);
+  return glm::vec2(float(x) / N, float(y) / N);
 }
 
 
@@ -205,7 +208,7 @@ private:
 
 void PartitionedTlasSample::createScene(bool resetCamera)
 {
-  nvh::ScopedTimer st(__FUNCTION__);
+  nvutils::ScopedTimer st(__FUNCTION__);
 
   m_staticObjectCount  = 0u;
   m_dynamicObjectCount = 0u;
@@ -234,9 +237,9 @@ void PartitionedTlasSample::createScene(bool resetCamera)
   std::vector<uint32_t> instanceCountPerPartition(m_partitionCountPerAxis * m_partitionCountPerAxis);
   uint32_t              skipCounter = 0u;
 #endif
-  std::vector<nvh::Node> dynamicNodes;
-  uint32_t               archesSpacing;
-  uint32_t               archesCount;
+  std::vector<nvutils::Node> dynamicNodes;
+  uint32_t                   archesSpacing;
+  uint32_t                   archesCount;
 
   std::vector<glm::uvec4> archesLocations;
 
@@ -261,11 +264,11 @@ void PartitionedTlasSample::createScene(bool resetCamera)
 
     LOGI("Placing %zu dominoes\n", dynamicSamples.size());
     m_dominoCount = uint32_t(dynamicSamples.size());
-    m_meshes.emplace_back(nvh::createCube());
+    m_meshes.emplace_back(nvutils::createCube());
 
 
-    const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * static_cast<float>(0);
-    const glm::vec3 v    = static_cast<glm::vec3>(sin(freq) * 0.5F + 0.5F);
+    const glm::vec3 freq = glm::vec3(1.33333F, 2.33333F, 3.33333F) * 0.f;
+    const glm::vec3 v    = glm::vec3(sin(freq) * 0.5F + 0.5F);
     m_materials.push_back({glm::vec4(v, 1)});
 
     dynamicNodes.reserve(dynamicSamples.size());
@@ -296,12 +299,12 @@ void PartitionedTlasSample::createScene(bool resetCamera)
           instanceCountPerPartition[partitionIndex]++;
         }
 #endif
-        nvh::Node& n    = dynamicNodes.emplace_back();
-        n.mesh          = int32_t(m_meshes.size() - 1);
-        n.material      = int32_t(m_materials.size() - 1);
-        n.translation.x = pos.x;
-        n.translation.y = m_dominoHeight * 0.5f;
-        n.translation.z = pos.y;
+        nvutils::Node& n = dynamicNodes.emplace_back();
+        n.mesh           = int32_t(m_meshes.size() - 1);
+        n.material       = int32_t(m_materials.size() - 1);
+        n.translation.x  = pos.x;
+        n.translation.y  = m_dominoHeight * 0.5f;
+        n.translation.z  = pos.y;
 
         m_dynamicObjectCount++;
 
@@ -359,7 +362,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
       m_materials.push_back({glm::vec4(.7F, .7F, .7F, 1.0F)});
 
 
-      m_meshes.emplace_back(nvh::createPlane(10, partitionSize, partitionSize));
+      m_meshes.emplace_back(nvutils::createPlane(10, partitionSize, partitionSize));
       for(int32_t y = 0; y < m_partitionCountPerAxis; y++)
       {
         for(int32_t x = 0; x < m_partitionCountPerAxis; x++)
@@ -382,10 +385,10 @@ void PartitionedTlasSample::createScene(bool resetCamera)
             instanceCountPerPartition[partitionIndex]++;
           }
 #endif
-          nvh::Node& n  = m_nodes.emplace_back();
-          n.mesh        = static_cast<int>(m_meshes.size()) - 1;
-          n.material    = static_cast<int>(m_materials.size()) - 1;
-          n.translation = pos;
+          nvutils::Node& n = m_nodes.emplace_back();
+          n.mesh           = int32_t(m_meshes.size()) - 1;
+          n.material       = int32_t(m_materials.size()) - 1;
+          n.translation    = pos;
         }
       }
     }
@@ -400,7 +403,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
     // Semi-transparent icosahedra
     if(true)
     {
-      m_meshes.emplace_back(nvh::createIcosahedron());
+      m_meshes.emplace_back(nvutils::createIcosahedron());
       m_materials.push_back({glm::vec4(.4F, .7F, .4F, 0.4F)});
 
       uint32_t objectCount = (grid.getResolution().x * grid.getResolution().y) / 100;
@@ -439,9 +442,9 @@ void PartitionedTlasSample::createScene(bool resetCamera)
         grid.set(upos, true);
 
 
-        nvh::Node& n = m_nodes.emplace_back();
-        n.mesh       = int32_t(m_meshes.size() - 1);
-        n.material   = int32_t(m_materials.size() - 1);
+        nvutils::Node& n = m_nodes.emplace_back();
+        n.mesh           = int32_t(m_meshes.size() - 1);
+        n.material       = int32_t(m_materials.size() - 1);
 
         n.translation.x = pos.x;
         n.translation.z = pos.y;
@@ -450,9 +453,9 @@ void PartitionedTlasSample::createScene(bool resetCamera)
 
         n.translation.y     = heightVariation / 2.f;
         n.scale             = glm::vec3(heightVariation);
-        float rotationAngle = M_PI * 0.5f;
+        float rotationAngle = glm::pi<float>() * 0.5f;
         n.rotation          = glm::angleAxis(rotationAngle, glm::vec3{1.f, 0.f, 1.f});
-        rotationAngle       = distFloat(rng) * M_PI * 1.f;
+        rotationAngle       = distFloat(rng) * glm::pi<float>() * 1.f;
         n.rotation          = glm::angleAxis(rotationAngle, glm::vec3{0.f, 1.f, 0.f});
       }
     }
@@ -461,7 +464,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
     if(true)
     {
       float tileHeight = 0.1f;
-      m_meshes.emplace_back(nvh::createCube(tileSize * 0.98f, 0.1f, tileSize * 0.98f));
+      m_meshes.emplace_back(nvutils::createCube(tileSize * 0.98f, 0.1f, tileSize * 0.98f));
       m_materials.push_back({glm::vec4(.5F, .5F, .5F, 1.0F)});
       m_nodes.reserve(m_nodes.size() + grid.getResolution().x * grid.getResolution().y);
       for(uint32_t y = 0; y < grid.getResolution().y; y++)
@@ -491,15 +494,15 @@ void PartitionedTlasSample::createScene(bool resetCamera)
             }
           }
 #endif
-          nvh::Node& n    = m_nodes.emplace_back();
-          n.mesh          = int32_t(m_meshes.size() - 1);
-          n.material      = int32_t(m_materials.size() - 1);
-          n.translation.x = pos.x;
-          n.translation.z = pos.y;
-          n.translation.y = -tileHeight;
+          nvutils::Node& n = m_nodes.emplace_back();
+          n.mesh           = int32_t(m_meshes.size() - 1);
+          n.material       = int32_t(m_materials.size() - 1);
+          n.translation.x  = pos.x;
+          n.translation.z  = pos.y;
+          n.translation.y  = -tileHeight;
           if(!grid.get(upos))
           {
-            float     rotationAngle = distFloat(rng) * M_PI * 0.1f;
+            float     rotationAngle = distFloat(rng) * glm::pi<float>() * 0.1f;
             glm::vec3 rotationAxis  = {distFloat(rng), distFloat(rng), distFloat(rng)};
 
             n.rotation = glm::angleAxis(rotationAngle, glm::vec3{0.f, 1.f, 0.f}) * n.rotation;
@@ -507,7 +510,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
           }
           else
           {
-            float     rotationAngle = distFloat(rng) * M_PI * 0.01f;
+            float     rotationAngle = distFloat(rng) * glm::pi<float>() * 0.01f;
             glm::vec3 rotationAxis  = {distFloat(rng), distFloat(rng), distFloat(rng)};
 
             n.rotation = glm::angleAxis(rotationAngle, glm::vec3{0.f, 1.f, 0.f}) * n.rotation;
@@ -519,7 +522,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
     // Arches
     if(true)
     {
-      m_meshes.emplace_back(nvh::createTetrahedron());
+      m_meshes.emplace_back(nvutils::createTetrahedron());
       m_materials.push_back({glm::vec4(.5F, .5F, .5F, 1.0F)});
       m_nodes.reserve(m_nodes.size() + archesCount * 2);
 
@@ -543,7 +546,7 @@ void PartitionedTlasSample::createScene(bool resetCamera)
 
         //float objectSize = tileSize.x / 10.f;
         float    objectSize  = tileSize.x / 3.f;
-        uint32_t objectCount = tileSize.x / objectSize;
+        uint32_t objectCount = uint32_t(tileSize.x / objectSize);
 
         float     archLength = glm::length(pos1 - pos0);
         glm::vec2 archDir    = glm::normalize(pos1 - pos0);
@@ -560,10 +563,10 @@ void PartitionedTlasSample::createScene(bool resetCamera)
 
             glm::vec3 pos0Vec3;
             pos0Vec3.x = pos0.x - 0.5f * tileSize.x + idxOnLine * objectSize + archDir.x * 0.5f * archLength * archRatio
-                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * M_PI * 0.5f) * archNormal.x * archHeight;
+                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * glm::pi<float>() * 0.5f) * archNormal.x * archHeight;
             pos0Vec3.z = pos0.y - 0.5f * tileSize.y + idxOnLine * objectSize + archDir.y * 0.5f * archLength * archRatio
-                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * M_PI * 0.5f) * archNormal.y * archHeight;
-            pos0Vec3.y = 0.1f + sinf(archRatio * M_PI * 0.5f) * archHeight;
+                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * glm::pi<float>() * 0.5f) * archNormal.y * archHeight;
+            pos0Vec3.y = 0.1f + sinf(archRatio * glm::pi<float>() * 0.5f) * archHeight;
 
 #ifdef MAX_INSTANCES_PER_PARTITION
             {
@@ -579,23 +582,23 @@ void PartitionedTlasSample::createScene(bool resetCamera)
               }
             }
 #endif
-            nvh::Node& n0 = m_nodes.emplace_back();
-            n0.mesh       = int32_t(m_meshes.size() - 1);
-            n0.material   = int32_t(m_materials.size() - 1);
+            nvutils::Node& n0 = m_nodes.emplace_back();
+            n0.mesh           = int32_t(m_meshes.size() - 1);
+            n0.material       = int32_t(m_materials.size() - 1);
 
 
             n0.scale       = glm::vec3(objectSize, objectSize, objectSize);
-            n0.rotation    = glm::angleAxis(float(archRatio * M_PI * 0.5f), glm::vec3{0.f, 1.f, 0.f});
+            n0.rotation    = glm::angleAxis(float(archRatio * glm::pi<float>() * 0.5f), glm::vec3{0.f, 1.f, 0.f});
             n0.translation = pos0Vec3;
 
 
             glm::vec3 pos1Vec3;
             pos1Vec3.x = pos1.x - 0.5f * tileSize.x + idxOnLine * objectSize - archDir.x * 0.5f * archLength * archRatio
-                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * M_PI * 0.5f) * archNormal.x * archHeight;
+                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * glm::pi<float>() * 0.5f) * archNormal.x * archHeight;
             pos1Vec3.z = pos1.y - 0.5f * tileSize.y + idxOnLine * objectSize - archDir.y * 0.5f * archLength * archRatio
-                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * M_PI * 0.5f) * archNormal.y * archHeight;
+                         + 2.f * (lineRatio - 0.5f) * sinf(archRatio * glm::pi<float>() * 0.5f) * archNormal.y * archHeight;
 
-            pos1Vec3.y = 0.1f + sinf(archRatio * M_PI * 0.5f) * archHeight;
+            pos1Vec3.y = 0.1f + sinf(archRatio * glm::pi<float>() * 0.5f) * archHeight;
 
 #ifdef MAX_INSTANCES_PER_PARTITION
             {
@@ -611,13 +614,13 @@ void PartitionedTlasSample::createScene(bool resetCamera)
               }
             }
 #endif
-            nvh::Node& n1 = m_nodes.emplace_back();
-            n1.mesh       = int32_t(m_meshes.size() - 1);
-            n1.material   = int32_t(m_materials.size() - 1);
+            nvutils::Node& n1 = m_nodes.emplace_back();
+            n1.mesh           = int32_t(m_meshes.size() - 1);
+            n1.material       = int32_t(m_materials.size() - 1);
 
 
             n1.scale       = glm::vec3(objectSize, objectSize, objectSize);
-            n1.rotation    = glm::angleAxis(float(archRatio * M_PI * 0.5f), glm::vec3{0.f, 1.f, 0.f});
+            n1.rotation    = glm::angleAxis(float(archRatio * glm::pi<float>() * 0.5f), glm::vec3{0.f, 1.f, 0.f});
             n1.translation = pos1Vec3;
           }
         }
@@ -644,10 +647,10 @@ void PartitionedTlasSample::createScene(bool resetCamera)
   // Setting camera to see the scene
   if(resetCamera)
   {
-    CameraManip.setClipPlanes({0.1F, 100.0F});
-    CameraManip.setLookat({-20.F, 10.0F, 15.0F}, {-15.F, 7.F, 7.0F}, {0.0F, 1.0F, 0.0F});
-    CameraManip.setMode(nvh::CameraManipulator::Fly);
-    CameraManip.setSpeed(20.f);
+    g_cameraManipulator->setClipPlanes({0.1F, 100.0F});
+    g_cameraManipulator->setLookat({-20.F, 10.0F, 15.0F}, {-15.F, 7.F, 7.0F}, {0.0F, 1.0F, 0.0F});
+    g_cameraManipulator->setMode(nvutils::CameraManipulator::Fly);
+    g_cameraManipulator->setSpeed(20.f);
   }
   // Default parameters for overall material
   m_pushConst.intensity = 5.0F;
@@ -656,14 +659,14 @@ void PartitionedTlasSample::createScene(bool resetCamera)
   m_pushConst.metallic  = 0.1F;
 
   // Default Sky values
-  m_skyParams = nvvkhl_shaders::initSimpleSkyParameters();
+  m_skyParams = shaderio::SkySimpleParameters();
 }
 
 
 // Create all Vulkan buffer data
 void PartitionedTlasSample::createVkBuffers()
 {
-  nvh::ScopedTimer st(__FUNCTION__);
+  nvutils::ScopedTimer st(__FUNCTION__);
 
   VkCommandBuffer cmd = m_app->createTempCmdBuffer();
   m_bMeshes.resize(m_meshes.size());
@@ -675,44 +678,54 @@ void PartitionedTlasSample::createVkBuffers()
   for(size_t i = 0; i < m_meshes.size(); i++)
   {
     PrimitiveMeshVk& m = m_bMeshes[i];
-    m.vertices         = m_alloc->createBuffer(cmd, m_meshes[i].vertices, rt_usage_flag);
-    m.indices          = m_alloc->createBuffer(cmd, m_meshes[i].triangles, rt_usage_flag);
-    m_dutil->DBG_NAME_IDX(m.vertices.buffer, i);
-    m_dutil->DBG_NAME_IDX(m.indices.buffer, i);
+    NVVK_CHECK(m_alloc.createBuffer(m.vertices, std::span(m_meshes[i].vertices).size_bytes(), rt_usage_flag));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m.vertices, 0, std::span(m_meshes[i].vertices)));
+    NVVK_DBG_NAME(m.vertices.buffer);
+
+    NVVK_CHECK(m_alloc.createBuffer(m.indices, std::span(m_meshes[i].triangles).size_bytes(), rt_usage_flag));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m.indices, 0, std::span(m_meshes[i].triangles)));
+    NVVK_DBG_NAME(m.indices.buffer);
   }
 
   // Create the buffer of the current frame, changing at each frame
-  m_bFrameInfo = m_alloc->createBuffer(sizeof(DH::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  m_dutil->DBG_NAME(m_bFrameInfo.buffer);
+  NVVK_CHECK(m_alloc.createBuffer(m_bFrameInfo, sizeof(shaderio::FrameInfo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                  VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
+  NVVK_DBG_NAME(m_bFrameInfo.buffer);
 
   // Create the buffer of sky parameters, updated at each frame
-  m_bSkyParams = m_alloc->createBuffer(sizeof(nvvkhl_shaders::SimpleSkyParameters), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  m_dutil->DBG_NAME(m_bSkyParams.buffer);
+  NVVK_CHECK(m_alloc.createBuffer(m_bSkyParams, sizeof(shaderio::SkySimpleParameters),
+                                  VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                  VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
+  NVVK_DBG_NAME(m_bSkyParams.buffer);
 
   // Primitive instance information
-  std::vector<DH::InstanceInfo> inst_info;
+  std::vector<shaderio::InstanceInfo> inst_info;
   inst_info.resize(m_nodes.size());
 
   uint32_t numThreads = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
-  nvh::parallel_batches(
+  nvutils::parallel_batches(
       m_nodes.size(),
       [&](uint64_t i) {
-        nvh::Node&       node = m_nodes[i];
-        DH::InstanceInfo info{.transform = node.localMatrix(), .materialID = node.material, .meshID = node.mesh};
+        nvutils::Node&         node = m_nodes[i];
+        shaderio::InstanceInfo info{.transform = node.localMatrix(), .materialID = node.material, .meshID = node.mesh};
         inst_info[i] = info;
       },
       numThreads);
 
 
-  m_bInstInfoBuffer =
-      m_alloc->createBuffer(cmd, inst_info, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  m_dutil->DBG_NAME(m_bInstInfoBuffer.buffer);
+  NVVK_CHECK(m_alloc.createBuffer(m_bInstInfoBuffer, std::span(inst_info).size_bytes(),
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+  NVVK_CHECK(m_stagingUploader.appendBuffer(m_bInstInfoBuffer, 0, std::span(inst_info)));
+  NVVK_DBG_NAME(m_bInstInfoBuffer.buffer);
 
-  m_bMaterials = m_alloc->createBuffer(cmd, m_materials, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-  m_dutil->DBG_NAME(m_bMaterials.buffer);
 
+  NVVK_CHECK(m_alloc.createBuffer(m_bMaterials, std::span(m_materials).size_bytes(),
+                                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+  NVVK_CHECK(m_stagingUploader.appendBuffer(m_bMaterials, 0, std::span(m_materials)));
+  NVVK_DBG_NAME(m_bMaterials.buffer);
+
+
+  m_stagingUploader.cmdUploadAppended(cmd);
   m_app->submitAndWaitTempCmdBuffer(cmd);
 }
 
@@ -728,14 +741,14 @@ void PartitionedTlasSample::createAnimationData()
   m_partitionIndexPerNode.resize(m_dynamicObjectCount + m_staticObjectCount);
 
   m_animationShaderData.dynamicObjectCount = uint32_t(m_dynamicObjectCount);
-  std::vector<DH::AnimationState> originalState(m_dynamicObjectCount);
+  std::vector<shaderio::AnimationState> originalState(m_dynamicObjectCount);
 
   uint32_t numThreads = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
-  nvh::parallel_batches(
+  nvutils::parallel_batches(
       m_dynamicObjectCount,
       [&](uint64_t i) {
         originalState[i].linearVelocity = glm::vec3(0.f);
-        DH::setTransform4x4(originalState[i], m_nodes[i + m_staticObjectCount].localMatrix());
+        shaderio::setTransform4x4(originalState[i], m_nodes[i + m_staticObjectCount].localMatrix());
         originalState[i].stateID = STATE_FREE;
       },
       numThreads);
@@ -757,12 +770,12 @@ void PartitionedTlasSample::createAnimationData()
   std::vector<uint32_t> perPartitionCounter(m_partitionCountPerAxis * m_partitionCountPerAxis);
 
 
-  nvh::parallel_batches(
+  nvutils::parallel_batches(
       m_dynamicObjectCount,
       [&](uint64_t i) {
         size_t globalIndex = m_staticObjectCount + i;
 
-        glm::vec3 originalPosition = DH::getPosition(originalState[i]);
+        glm::vec3 originalPosition = shaderio::getPosition(originalState[i]);
 
         // The partitions are defined as a simple ground-aligned grid
         originalState[i].partitionID = partitionIndexFromPosition(originalPosition);  // indexX + m_partitionCountPerAxis * indexY;
@@ -779,11 +792,12 @@ void PartitionedTlasSample::createAnimationData()
           glm::vec3 orientation;
           if(i < m_dynamicObjectCount - 1)
           {
-            orientation = glm::normalize(DH::getPosition(originalState[i + 1]) - DH::getPosition(originalState[i]));
+            orientation = glm::normalize(shaderio::getPosition(originalState[i + 1]) - shaderio::getPosition(originalState[i]));
           }
           else
           {
-            orientation = -glm::normalize(DH::getPosition(originalState[i]) - DH::getPosition(originalState[i - 1]));
+            orientation =
+                -glm::normalize(shaderio::getPosition(originalState[i]) - shaderio::getPosition(originalState[i - 1]));
           }
 
           glm::vec3 axis = normalize(glm::cross(glm::vec3(0.f, 1.f, 0.f), orientation));
@@ -798,11 +812,11 @@ void PartitionedTlasSample::createAnimationData()
       numThreads);
 
   // Adding 1 for the global partition
-  std::vector<DH::PartitionState> partitionState(m_partitionCountPerAxis * m_partitionCountPerAxis + 1);
+  std::vector<shaderio::PartitionState> partitionState(m_partitionCountPerAxis * m_partitionCountPerAxis + 1);
 
   std::vector<std::atomic_uint32_t> staticCounter(m_partitionCountPerAxis * m_partitionCountPerAxis + 1);
 
-  nvh::parallel_batches(
+  nvutils::parallel_batches(
       m_staticObjectCount,
       [&](uint64_t i) {
         size_t globalIndex = i;
@@ -821,32 +835,64 @@ void PartitionedTlasSample::createAnimationData()
     partitionState[i].staticObjectCount = staticCounter[i].load(std::memory_order_relaxed);
   }
 
-  std::vector<DH::AnimationGlobalState> globalState(1);
+  std::vector<shaderio::AnimationGlobalState> globalState(1);
   globalState[0].currentCollisionIndex = 0;
   globalState[0].toppleRequest         = ~0u;
   globalState[0].focus                 = ~0u;
 
 
-  for(auto& p : partitionState)
+  for(shaderio::PartitionState& p : partitionState)
   {
     p.lastModified = ~0u;
   }
 
   {
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
-    m_originalState     = m_alloc->createBuffer(cmd, originalState, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    m_state[0] = m_alloc->createBuffer(cmd, originalState, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    m_state[1] = m_alloc->createBuffer(cmd, originalState, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    m_globalState = m_alloc->createBuffer(cmd, globalState, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    m_globalStateHost = m_alloc->createBuffer(cmd, globalState, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-    m_partitionState = m_alloc->createBuffer(cmd, partitionState, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    NVVK_CHECK(m_alloc.createBuffer(m_originalState, std::span(originalState).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_originalState, 0, std::span(originalState)));
+    NVVK_DBG_NAME(m_originalState.buffer);
+
+
+    NVVK_CHECK(m_alloc.createBuffer(m_state[0], std::span(originalState).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_state[0], 0, std::span(originalState)));
+    NVVK_DBG_NAME(m_state[0].buffer);
+
+    NVVK_CHECK(m_alloc.createBuffer(m_state[1], std::span(originalState).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_state[1], 0, std::span(originalState)));
+    NVVK_DBG_NAME(m_state[1].buffer);
+
+
+    NVVK_CHECK(m_alloc.createBuffer(m_globalState, std::span(globalState).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_globalState, 0, std::span(globalState)));
+    NVVK_DBG_NAME(m_globalState.buffer);
+
+
+    NVVK_CHECK(m_alloc.createBuffer(m_globalStateHost, std::span(globalState).size_bytes(),
+                                    VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                    VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_globalStateHost, 0, std::span(globalState)));
+    NVVK_DBG_NAME(m_globalStateHost.buffer);
+
+
+    NVVK_CHECK(m_alloc.createBuffer(m_partitionState, std::span(partitionState).size_bytes(),
+                                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+    NVVK_CHECK(m_stagingUploader.appendBuffer(m_globalState, 0, std::span(globalState)));
+    NVVK_DBG_NAME(m_globalState.buffer);
 
 #ifdef USE_NVVK_INSPECTOR
-    nvvkhl::ElementInspector::BufferInspectionInfo bufferInfo{};
-    bufferInfo.entryCount   = originalState.size();
-    bufferInfo.format       = g_elementInspector->formatStruct(DH::getInspectorStringAnimationState());
+    nvapp::ElementInspector::BufferInspectionInfo bufferInfo{};
+    bufferInfo.entryCount   = uint32_t(originalState.size());
+    bufferInfo.format       = g_elementInspector->formatStruct(shaderio::getInspectorStringAnimationState());
     bufferInfo.name         = "State0";
     bufferInfo.sourceBuffer = m_state[0].buffer;
     g_elementInspector->initBufferInspection(eState0, bufferInfo);
@@ -860,12 +906,13 @@ void PartitionedTlasSample::createAnimationData()
     g_elementInspector->initBufferInspection(eStateOriginal, bufferInfo);
 
 
-    bufferInfo.entryCount   = partitionState.size();
-    bufferInfo.format       = g_elementInspector->formatStruct(DH::getInspectorStringPartitionState());
+    bufferInfo.entryCount   = uint32_t(partitionState.size());
+    bufferInfo.format       = g_elementInspector->formatStruct(shaderio::getInspectorStringPartitionState());
     bufferInfo.name         = "Partition State";
     bufferInfo.sourceBuffer = m_partitionState.buffer;
     g_elementInspector->initBufferInspection(ePartitionState, bufferInfo);
 #endif
+    m_stagingUploader.cmdUploadAppended(cmd);
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
 

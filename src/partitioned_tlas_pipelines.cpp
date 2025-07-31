@@ -18,6 +18,7 @@
  */
 
 #include "partitioned_tlas.hpp"
+#include "nvutils/spirv.hpp"
 
 void PartitionedTlasSample::recompilePipeline()
 {
@@ -26,38 +27,56 @@ void PartitionedTlasSample::recompilePipeline()
   VkPipeline result = VK_NULL_HANDLE;
 
   // Creating all shaders
-  for(auto& s : m_stages)
+
+
+  std::array<VkPipelineShaderStageCreateInfo, eShaderGroupCount> stages{};
+
+  std::array<VkRayTracingShaderGroupCreateInfoKHR, eShaderGroupCount> shaderGroups{};
+
+  for(VkPipelineShaderStageCreateInfo& s : stages)
+  {
     s.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-
-
-  nvvk::ShaderModuleID rgenId = m_shaderManager.createShaderModule(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "raytrace.rgen.glsl");
-  m_stages[eRaygen].module = m_shaderManager.getShaderModule(rgenId).module;
-  m_stages[eRaygen].pName  = "main";
-  m_stages[eRaygen].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-
-  nvvk::ShaderModuleID missId = m_shaderManager.createShaderModule(VK_SHADER_STAGE_MISS_BIT_KHR, "raytrace.rmiss.glsl");
-  m_stages[eMiss].module = m_shaderManager.getShaderModule(missId).module;
-  m_stages[eMiss].pName  = "main";
-  m_stages[eMiss].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
-
-  nvvk::ShaderModuleID chitId = m_shaderManager.createShaderModule(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "raytrace.rchit.glsl");
-  m_stages[eClosestHit].module = m_shaderManager.getShaderModule(chitId).module;
-  m_stages[eClosestHit].pName  = "main";
-  m_stages[eClosestHit].stage  = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-
-  if(m_stages[eRaygen].module != VK_NULL_HANDLE)
-  {
-    m_dutil->setObjectName(m_stages[eRaygen].module, "Raygen");
-  }
-  if(m_stages[eMiss].module != VK_NULL_HANDLE)
-  {
-    m_dutil->setObjectName(m_stages[eMiss].module, "Miss");
-  }
-  if(m_stages[eClosestHit].module != VK_NULL_HANDLE)
-  {
-    m_dutil->setObjectName(m_stages[eClosestHit].module, "Closest Hit");
   }
 
+  std::string rgenName  = "raytrace.rgen.glsl";
+  std::string rchitName = "raytrace.rchit.glsl";
+  std::string rmissName = "raytrace.rmiss.glsl";
+
+  LOGI("\t%s\n", rgenName.c_str());
+
+
+  shaderc::SpvCompilationResult rgenId = m_glslCompiler.compileFile(rgenName, shaderc_glsl_raygen_shader);
+  assert(m_glslCompiler.isValid(rgenId));
+  nvutils::dumpSpirvWithHashedName(rgenName + ".spv", m_glslCompiler.getSpirvData(rgenId).data(),
+                                   m_glslCompiler.getSpirvSize(rgenId));
+
+
+  VkShaderModuleCreateInfo rgenShaderInfo = m_glslCompiler.makeShaderModuleCreateInfo(rgenId);
+  stages[eRaygen].pNext                   = &rgenShaderInfo;
+  stages[eRaygen].pName                   = "main";
+  stages[eRaygen].stage                   = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
+  LOGI("\t%s\n", rmissName.c_str());
+  shaderc::SpvCompilationResult missId = m_glslCompiler.compileFile(rmissName, shaderc_glsl_miss_shader);
+  assert(m_glslCompiler.isValid(missId));
+  nvutils::dumpSpirvWithHashedName(rmissName + ".spv", m_glslCompiler.getSpirvData(missId).data(),
+                                   m_glslCompiler.getSpirvSize(missId));
+
+
+  VkShaderModuleCreateInfo rmissShaderInfo = m_glslCompiler.makeShaderModuleCreateInfo(missId);
+  stages[eMiss].pNext                      = &rmissShaderInfo;
+  stages[eMiss].pName                      = "main";
+  stages[eMiss].stage                      = VK_SHADER_STAGE_MISS_BIT_KHR;
+
+  LOGI("\t%s\n", rchitName.c_str());
+  shaderc::SpvCompilationResult chitId = m_glslCompiler.compileFile(rchitName, shaderc_glsl_closesthit_shader);
+  assert(m_glslCompiler.isValid(chitId));
+  nvutils::dumpSpirvWithHashedName(rchitName + ".spv", m_glslCompiler.getSpirvData(chitId).data(),
+                                   m_glslCompiler.getSpirvSize(chitId));
+  VkShaderModuleCreateInfo rchitShaderInfo = m_glslCompiler.makeShaderModuleCreateInfo(chitId);
+  stages[eClosestHit].pNext                = &rchitShaderInfo;
+  stages[eClosestHit].pName                = "main";
+  stages[eClosestHit].stage                = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
   // Shader groups
   VkRayTracingShaderGroupCreateInfoKHR group{.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
@@ -68,52 +87,63 @@ void PartitionedTlasSample::recompilePipeline()
 
 
   // Raygen
-  m_shaderGroups[eRaygen]               = group;
-  m_shaderGroups[eRaygen].type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-  m_shaderGroups[eRaygen].generalShader = eRaygen;
+  shaderGroups[eRaygen]               = group;
+  shaderGroups[eRaygen].type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+  shaderGroups[eRaygen].generalShader = eRaygen;
 
   // Miss
-  m_shaderGroups[eMiss]               = group;
-  m_shaderGroups[eMiss].type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-  m_shaderGroups[eMiss].generalShader = eMiss;
+  shaderGroups[eMiss]               = group;
+  shaderGroups[eMiss].type          = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+  shaderGroups[eMiss].generalShader = eMiss;
 
   // closest hit shader
-  m_shaderGroups[eClosestHit]                  = group;
-  m_shaderGroups[eClosestHit].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-  m_shaderGroups[eClosestHit].generalShader    = VK_SHADER_UNUSED_KHR;
-  m_shaderGroups[eClosestHit].closestHitShader = eClosestHit;
+  shaderGroups[eClosestHit]                  = group;
+  shaderGroups[eClosestHit].type             = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+  shaderGroups[eClosestHit].generalShader    = VK_SHADER_UNUSED_KHR;
+  shaderGroups[eClosestHit].closestHitShader = eClosestHit;
 
-  m_rayPipelineInfo = {
+  m_raytracingPipelineInfo = {
       .sType                        = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
-      .stageCount                   = static_cast<uint32_t>(m_stages.size()),  // Stages are shader
-      .pStages                      = m_stages.data(),
-      .groupCount                   = static_cast<uint32_t>(m_shaderGroups.size()),
-      .pGroups                      = m_shaderGroups.data(),
+      .flags                        = {},
+      .stageCount                   = uint32_t(stages.size()),  // Stages are shader
+      .pStages                      = stages.data(),
+      .groupCount                   = uint32_t(shaderGroups.size()),
+      .pGroups                      = shaderGroups.data(),
       .maxPipelineRayRecursionDepth = MAXRAYRECURSIONDEPTH,  // Ray dept
-      .layout                       = m_rtPipe.layout,
+      .layout                       = m_raytracingPipelineLayout,
   };
 
+
   bool compilationSucceeded = true;
-  for(auto& s : m_stages)
-  {
-    if(s.module == VK_NULL_HANDLE)
-    {
-      compilationSucceeded = false;
-      break;
-    }
-  }
   if(compilationSucceeded)
   {
-    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &m_rayPipelineInfo, nullptr, &result);
+    vkCreateRayTracingPipelinesKHR(m_device, {}, {}, 1, &m_raytracingPipelineInfo, nullptr, &result);
 
     if(result != VK_NULL_HANDLE)
     {
       vkDeviceWaitIdle(m_device);
-      vkDestroyPipeline(m_device, m_rtPipe.plines[0], nullptr);
-      m_rtPipe.plines[0] = result;
-      m_dutil->DBG_NAME(m_rtPipe.plines[0]);
+      vkDestroyPipeline(m_device, m_raytracingPipeline, nullptr);
+      m_raytracingPipeline = result;
+      NVVK_DBG_NAME(m_raytracingPipeline);
 
-      m_sbt.create(m_rtPipe.plines[0], m_rayPipelineInfo);
+
+      // Creating the SBT
+      {
+        // Shader Binding Table (SBT) setup
+        // Prepare SBT data from ray pipeline
+        size_t bufferSize = m_sbt.calculateSBTBufferSize(m_raytracingPipeline, m_raytracingPipelineInfo);
+
+        // Create SBT buffer using the size from above
+        NVVK_CHECK(m_alloc.createBuffer(m_sbtBuffer, bufferSize, VK_BUFFER_USAGE_2_SHADER_BINDING_TABLE_BIT_KHR, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                        VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                                        m_sbt.getBufferAlignment()));
+        NVVK_DBG_NAME(m_sbtBuffer.buffer);
+
+
+        // Pass the manual mapped pointer to fill the sbt data
+        NVVK_CHECK(m_sbt.populateSBTBuffer(m_sbtBuffer.address, bufferSize, m_sbtBuffer.mapping));
+      }
+
       return;
     }
   }
@@ -125,99 +155,111 @@ void PartitionedTlasSample::recompilePipeline()
 //
 void PartitionedTlasSample::createRtxPipeline()
 {
+  m_raytracingDescriptorPack.deinit();
+  m_raytracingDescriptorPack.bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_aoImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_depthImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
 
-  nvvkhl::PipelineContainer& p = m_rtPipe;
-  p.plines.resize(1);
 
-  // This descriptor set, holds the top level acceleration structure and the output image
-  // Create Binding Set
-  m_rtSet->addBinding(B_tlas, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_aoImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_depthImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_vertex, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
-  m_rtSet->addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
-  m_rtSet->initLayout();
-  m_rtSet->initPool(1);
+  m_raytracingDescriptorPack.bindings.addBinding(B_frameInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_sceneDesc, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_skyParam, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL);
 
-  m_dutil->DBG_NAME(m_rtSet->getLayout());
-  m_dutil->DBG_NAME(m_rtSet->getSet(0));
+  m_raytracingDescriptorPack.bindings.addBinding(B_materials, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_instances, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_vertex, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                 (uint32_t)m_bMeshes.size(), VK_SHADER_STAGE_ALL);
+  m_raytracingDescriptorPack.bindings.addBinding(B_index, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)m_bMeshes.size(),
+                                                 VK_SHADER_STAGE_ALL);
+
+
+  m_raytracingDescriptorPack.initFromBindings(m_device);
+  NVVK_DBG_NAME(m_raytracingDescriptorPack.layout);
+  NVVK_DBG_NAME(m_raytracingDescriptorPack.sets[0]);
 
   // Push constant: we want to be able to update constants used by the shaders
-  const VkPushConstantRange push_constant{VK_SHADER_STAGE_ALL, 0, sizeof(DH::PushConstant)};
+  const VkPushConstantRange pushConstant{VK_SHADER_STAGE_ALL, 0, sizeof(shaderio::PushConstant)};
 
   // Descriptor sets: one specific to ray tracing, and one shared with the rasterization pipeline
-  std::vector<VkDescriptorSetLayout> rt_desc_set_layouts = {m_rtSet->getLayout()};
-  VkPipelineLayoutCreateInfo         pipeline_layout_create_info{
+  std::vector<VkDescriptorSetLayout> raytracingDescriptorLayouts = {m_raytracingDescriptorPack.layout};
+  VkPipelineLayoutCreateInfo         pipelineLayoutCreateInfo{
               .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-              .setLayoutCount         = static_cast<uint32_t>(rt_desc_set_layouts.size()),
-              .pSetLayouts            = rt_desc_set_layouts.data(),
+              .setLayoutCount         = uint32_t(raytracingDescriptorLayouts.size()),
+              .pSetLayouts            = raytracingDescriptorLayouts.data(),
               .pushConstantRangeCount = 1,
-              .pPushConstantRanges    = &push_constant,
+              .pPushConstantRanges    = &pushConstant,
   };
-  vkCreatePipelineLayout(m_device, &pipeline_layout_create_info, nullptr, &p.layout);
-  m_dutil->DBG_NAME(p.layout);
+  vkCreatePipelineLayout(m_device, &pipelineLayoutCreateInfo, nullptr, &m_raytracingPipelineLayout);
+  NVVK_DBG_NAME(m_raytracingPipelineLayout);
 
   recompilePipeline();
 }
 
-void PartitionedTlasSample::writeRtDesc()
+void PartitionedTlasSample::writeRaytracingDescriptors()
 {
   // Write to descriptors
   VkAccelerationStructureKHR tlas = m_tlas.accel;
 
-  VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
-                                                            .accelerationStructureCount = 1,
-                                                            .pAccelerationStructures    = &tlas};
+
+  nvvk::WriteSetContainer writes;
 
 
-  const VkDescriptorImageInfo  imageInfo{{}, m_gBuffers->getColorImageView(0), VK_IMAGE_LAYOUT_GENERAL};
-  const VkDescriptorImageInfo  aoInfo{{}, m_gBuffers->getColorImageView(1), VK_IMAGE_LAYOUT_GENERAL};
-  const VkDescriptorImageInfo  depthInfo{{}, m_gBuffers->getColorImageView(2), VK_IMAGE_LAYOUT_GENERAL};
-  const VkDescriptorBufferInfo dbi_unif{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
-  const VkDescriptorBufferInfo dbi_sky{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
-  const VkDescriptorBufferInfo mat_desc{m_bMaterials.buffer, 0, VK_WHOLE_SIZE};
-  const VkDescriptorBufferInfo inst_desc{m_bInstInfoBuffer.buffer, 0, VK_WHOLE_SIZE};
+  const VkDescriptorImageInfo  imageInfo{{}, m_gBuffers.getColorImageView(0), VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorImageInfo  aoInfo{{}, m_gBuffers.getColorImageView(1), VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorImageInfo  depthInfo{{}, m_gBuffers.getColorImageView(2), VK_IMAGE_LAYOUT_GENERAL};
+  const VkDescriptorBufferInfo frameInfo{m_bFrameInfo.buffer, 0, VK_WHOLE_SIZE};
+  const VkDescriptorBufferInfo skyInfo{m_bSkyParams.buffer, 0, VK_WHOLE_SIZE};
+  const VkDescriptorBufferInfo matInfo{m_bMaterials.buffer, 0, VK_WHOLE_SIZE};
+  const VkDescriptorBufferInfo instanceInfo{m_bInstInfoBuffer.buffer, 0, VK_WHOLE_SIZE};
 
-  std::vector<VkDescriptorBufferInfo> vertex_desc;
-  std::vector<VkDescriptorBufferInfo> index_desc;
-  vertex_desc.reserve(m_bMeshes.size());
-  index_desc.reserve(m_bMeshes.size());
-  for(auto& m : m_bMeshes)
+  std::vector<VkDescriptorBufferInfo> vertexInfos;
+  std::vector<VkDescriptorBufferInfo> indexInfos;
+  vertexInfos.reserve(m_bMeshes.size());
+  vertexInfos.reserve(m_bMeshes.size());
+  indexInfos.reserve(m_bMeshes.size());
+  for(PrimitiveMeshVk& m : m_bMeshes)
   {
-    vertex_desc.push_back({m.vertices.buffer, 0, VK_WHOLE_SIZE});
-    index_desc.push_back({m.indices.buffer, 0, VK_WHOLE_SIZE});
+    vertexInfos.push_back({m.vertices.buffer, 0, VK_WHOLE_SIZE});
+    indexInfos.push_back({m.indices.buffer, 0, VK_WHOLE_SIZE});
   }
 
-  std::vector<VkWriteDescriptorSet> writes;
+
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_outImage, m_raytracingDescriptorPack.sets[0]), &imageInfo);
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_frameInfo, m_raytracingDescriptorPack.sets[0]), &frameInfo);
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_skyParam, m_raytracingDescriptorPack.sets[0]), &skyInfo);
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_materials, m_raytracingDescriptorPack.sets[0]), &matInfo);
 
 
-  if(m_animationShaderData.ptlasActive == 0)
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_instances, m_raytracingDescriptorPack.sets[0]), &instanceInfo);
+
+  for(size_t i = 0; i < m_bMeshes.size(); i++)
   {
-    writes.emplace_back(m_rtSet->makeWrite(0, B_tlas, &desc_as_info));
-  }
-  else
-  {
-    VkWriteDescriptorSet ptlasWrite = m_ptlas.getWriteDescriptorSet(m_rtSet->getSet(), B_tlas);
-    writes.emplace_back(ptlasWrite);
+    writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_vertex, m_raytracingDescriptorPack.sets[0], uint32_t(i)),
+                  &vertexInfos[i]);
+    writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_index, m_raytracingDescriptorPack.sets[0], uint32_t(i)),
+                  &indexInfos[i]);
   }
 
-  writes.emplace_back(m_rtSet->makeWrite(0, B_outImage, &imageInfo));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_frameInfo, &dbi_unif));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_skyParam, &dbi_sky));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_materials, &mat_desc));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_instances, &inst_desc));
-  writes.emplace_back(m_rtSet->makeWriteArray(0, B_vertex, vertex_desc.data()));
-  writes.emplace_back(m_rtSet->makeWriteArray(0, B_index, index_desc.data()));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_aoImage, &aoInfo));
-  writes.emplace_back(m_rtSet->makeWrite(0, B_depthImage, &depthInfo));
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_aoImage, m_raytracingDescriptorPack.sets[0]), &aoInfo);
+  writes.append(m_raytracingDescriptorPack.bindings.getWriteSet(B_depthImage, m_raytracingDescriptorPack.sets[0]), &depthInfo);
 
-  vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+  vkUpdateDescriptorSets(m_device, uint32_t(writes.size()), writes.data(), 0, nullptr);
+}
+
+void PartitionedTlasSample::writeCompositingDescriptors()
+{
+  nvvk::WriteSetContainer writes;
+
+  const VkDescriptorImageInfo imageInfo{{}, m_gBuffers.getColorImageView(0), VK_IMAGE_LAYOUT_GENERAL};
+  writes.append(m_compositingDescriptorPack.bindings.getWriteSet(B_outImage, m_compositingDescriptorPack.sets[0]), &imageInfo);
+
+  const VkDescriptorImageInfo aoImageInfo{{}, m_gBuffers.getColorImageView(1), VK_IMAGE_LAYOUT_GENERAL};
+  writes.append(m_compositingDescriptorPack.bindings.getWriteSet(B_aoImage, m_compositingDescriptorPack.sets[0]), &aoImageInfo);
+
+  const VkDescriptorImageInfo depthImageInfo{{}, m_gBuffers.getColorImageView(2), VK_IMAGE_LAYOUT_GENERAL};
+  writes.append(m_compositingDescriptorPack.bindings.getWriteSet(B_depthImage, m_compositingDescriptorPack.sets[0]), &depthImageInfo);
+
+  vkUpdateDescriptorSets(m_device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 }
 
 
@@ -226,53 +268,113 @@ void PartitionedTlasSample::recompileAuxShaders()
   {
     LOGI("Compiling animation pipelines\n");
 
-    std::array<nvvk::ShaderModuleID, eAnimShaderCount> animShaderIds;
+    LOGI("\t%s\n", "shaders/animation_init.comp.glsl");
+    m_animationShaderModules[eAnimInit] =
+        m_glslCompiler.compileFile("shaders/animation_init.comp.glsl", shaderc_glsl_compute_shader);
+    nvutils::dumpSpirvWithHashedName("spvdump/animation_init.comp.spv",
+                                     m_glslCompiler.getSpirvData(m_animationShaderModules[eAnimInit]).data(),
+                                     m_glslCompiler.getSpirvSize(m_animationShaderModules[eAnimInit]));
 
-    animShaderIds[eAnimInit] = m_shaderManager.createShaderModule(VK_SHADER_STAGE_COMPUTE_BIT, "animation_init.comp.glsl");
-    animShaderIds[eAnimPhysics] = m_shaderManager.createShaderModule(VK_SHADER_STAGE_COMPUTE_BIT, "animation_physics.comp.glsl");
-    animShaderIds[eAnimUpdateInstances] =
-        m_shaderManager.createShaderModule(VK_SHADER_STAGE_COMPUTE_BIT, "animation_update_instances.comp.glsl");
+    LOGI("\t%s\n", "shaders/animation_physics.comp.glsl");
+    m_animationShaderModules[eAnimPhysics] =
+        m_glslCompiler.compileFile("shaders/animation_physics.comp.glsl", shaderc_glsl_compute_shader);
+    nvutils::dumpSpirvWithHashedName("spvdump/animation_physics.comp.spv",
+                                     m_glslCompiler.getSpirvData(m_animationShaderModules[eAnimPhysics]).data(),
+                                     m_glslCompiler.getSpirvSize(m_animationShaderModules[eAnimPhysics]));
+    LOGI("\t%s\n", "shaders/animation_instances.comp.glsl");
+    m_animationShaderModules[eAnimUpdateInstances] =
+        m_glslCompiler.compileFile("shaders/animation_update_instances.comp.glsl", shaderc_glsl_compute_shader);
+    nvutils::dumpSpirvWithHashedName("spvdump/animation_update_instances.comp.spv",
+                                     m_glslCompiler.getSpirvData(m_animationShaderModules[eAnimUpdateInstances]).data(),
+                                     m_glslCompiler.getSpirvSize(m_animationShaderModules[eAnimUpdateInstances]));
 
-    m_animDispatcher.deinit();
-    m_animDispatcher.init(m_device);
-    for(size_t i = 0; i < animShaderIds.size(); i++)
+    for(uint32_t i = 0; i < eAnimShaderCount; i++)
     {
-      if(animShaderIds[i].isValid())
-      {
-        VkShaderModule shaderModule = m_shaderManager.getShaderModule(animShaderIds[i]).module;
-        if(shaderModule != VK_NULL_HANDLE)
-        {
-          m_animDispatcher.setCode(shaderModule, uint32_t(i));
-        }
-        else
-        {
-          m_invalidShaderNotified = false;
-        }
-      }
-      else
+      if(m_animationShaderModules[i].GetNumErrors() > 0)
       {
         m_invalidShaderNotified = false;
       }
     }
-    m_animDispatcher.finalizePipeline();
+
+
+    {
+      VkPushConstantRange pushRange;
+      pushRange.offset     = 0;
+      pushRange.size       = sizeof(shaderio::AnimationShaderData);
+      pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+      VkPipelineLayoutCreateInfo layoutCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+      layoutCreateInfo.setLayoutCount             = 0;
+      layoutCreateInfo.pSetLayouts                = nullptr;  //&m_compositingDescriptorPack.layout;
+      layoutCreateInfo.pushConstantRangeCount     = 1;
+      layoutCreateInfo.pPushConstantRanges        = &pushRange;
+      NVVK_CHECK(vkCreatePipelineLayout(m_device, &layoutCreateInfo, nullptr, &m_animationPipelineLayout));
+      NVVK_DBG_NAME(m_animationPipelineLayout);
+
+      VkComputePipelineCreateInfo compInfo = {.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                              .stage  = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                         .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                                                         .pName = "main"},
+                                              .layout = m_animationPipelineLayout};
+
+      for(uint32_t i = 0; i < eAnimShaderCount; i++)
+      {
+        VkShaderModuleCreateInfo shaderInfo = m_glslCompiler.makeShaderModuleCreateInfo(m_animationShaderModules[i]);
+        compInfo.stage.pNext                = &shaderInfo;
+        NVVK_CHECK(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_animationPipelines[i]));
+      }
+    }
   }
 
 
   {
     LOGI("Compiling compositing pipeline\n");
-    nvvk::ShaderModuleID compId = m_shaderManager.createShaderModule(VK_SHADER_STAGE_COMPUTE_BIT, "compositing.comp.glsl");
-    if(compId.isValid())
+    m_glslCompiler.defaultOptions();
+    shaderc::SpvCompilationResult compId = m_glslCompiler.compileFile("shaders/compositing.comp.glsl", shaderc_glsl_compute_shader);
+
+
+    if(compId.GetNumErrors() == 0)
     {
-      VkShaderModule shaderModule = m_shaderManager.getShaderModule(compId).module;
+      VkShaderModuleCreateInfo shaderInfo = m_glslCompiler.makeShaderModuleCreateInfo(compId);
+
+      VkShaderModule shaderModule{};
+      NVVK_CHECK(vkCreateShaderModule(m_device, &shaderInfo, nullptr, &shaderModule));
+
       if(shaderModule != VK_NULL_HANDLE)
       {
-        m_compositingDispatcher.deinit();
-        m_compositingDispatcher.init(m_device);
-        m_compositingDispatcher.getBindings().addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-        m_compositingDispatcher.getBindings().addBinding(B_aoImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-        m_compositingDispatcher.getBindings().addBinding(B_depthImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
-        m_compositingDispatcher.setCode(shaderModule);
-        m_compositingDispatcher.finalizePipeline();
+        m_compositingDescriptorPack.deinit();
+        m_compositingDescriptorPack.bindings.addBinding(B_outImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+        m_compositingDescriptorPack.bindings.addBinding(B_aoImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+        m_compositingDescriptorPack.bindings.addBinding(B_depthImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_ALL);
+        m_compositingDescriptorPack.initFromBindings(m_device);
+
+
+        {
+          VkPushConstantRange pushRange;
+          pushRange.offset     = 0;
+          pushRange.size       = sizeof(shaderio::CompositingShaderData);
+          pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+          VkPipelineLayoutCreateInfo layoutCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+          layoutCreateInfo.setLayoutCount             = 1;
+          layoutCreateInfo.pSetLayouts                = &m_compositingDescriptorPack.layout;
+          layoutCreateInfo.pushConstantRangeCount     = 1;
+          layoutCreateInfo.pPushConstantRanges        = &pushRange;
+          NVVK_CHECK(vkCreatePipelineLayout(m_device, &layoutCreateInfo, nullptr, &m_compositingPipelineLayout));
+          NVVK_DBG_NAME(m_compositingPipelineLayout);
+
+          VkComputePipelineCreateInfo compInfo = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                                  .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                                                            .pName = "main"},
+                                                  .layout = m_compositingPipelineLayout};
+
+          compInfo.stage.pNext = &shaderInfo;
+          NVVK_CHECK(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_compositingPipeline));
+        }
+
+
+        vkDestroyShaderModule(m_device, shaderModule, nullptr);
       }
       else
       {

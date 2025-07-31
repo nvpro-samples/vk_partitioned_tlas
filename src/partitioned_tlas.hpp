@@ -23,39 +23,27 @@
 */
 
 //#define USE_VMA
+#pragma once
 
-
+#include "volk.h"
 #define IMGUI_DEFINE_MATH_OPERATORS  // ImGUI ImVec maths
+#include <vulkan/vulkan_core.h>
+
+#include "glm/gtx/spline.hpp"
+#include "nvvk/profiler_vk.hpp"
+
+#include "partitioned_acceleration_structures.hpp"
 
 
-#include "imgui/imgui_axis.hpp"
-#include "imgui/imgui_camera_widget.h"
-#include "imgui/imgui_helper.h"
-#include "nvh/primitives.hpp"
-#include "nvvk/buffers_vk.hpp"
-#include "nvvk/descriptorsets_vk.hpp"
-#include "nvvk/raytraceKHR_vk.hpp"
-#include "nvvk/sbtwrapper_vk.hpp"
-#include "nvvk/shaders_vk.hpp"
-#ifdef USE_VMA
-#include "nvvkhl/alloc_vma.hpp"
-#else
-#include "vk_mem_alloc.h"
-#include "nvvk/resourceallocator_vk.hpp"
-#include "nvvk/context_vk.hpp"
-#include "nvvk/memallocator_dma_vk.hpp"
-#endif
-#include "nvvkhl/element_benchmark_parameters.hpp"
-#include "nvvkhl/element_camera.hpp"
-#include "nvvkhl/element_gui.hpp"
+#include "nvutils/primitives.hpp"
+#include "nvvk/acceleration_structures.hpp"
+#include "nvvk/descriptors.hpp"
+#include "nvvk/gbuffers.hpp"
+#include "nvvk/sampler_pool.hpp"
+#include "nvvk/sbt_generator.hpp"
+#include "nvvkglsl/glsl.hpp"
+#include "nvutils/camera_manipulator.hpp"
 
-#include "nvvkhl/gbuffer.hpp"
-#include "nvvkhl/pipeline_container.hpp"
-#include "nvvkhl/shaders/dh_sky.h"
-
-#include "shaders/dh_bindings.h"
-
-#include "nvvk/shadermodulemanager_vk.hpp"
 
 #include <unordered_map>
 
@@ -72,14 +60,11 @@
 #define MAXRAYRECURSIONDEPTH 10
 
 
-namespace DH {
-using namespace glm;
-#include "shaders/device_host.h"  // Shared between host and device
-}  // namespace DH
+#include "shaders/shaderio.h"  // Shared between host and device
 
 #ifdef USE_NVVK_INSPECTOR
-#include "nvvkhl/element_inspector.hpp"
-extern std::shared_ptr<nvvkhl::ElementInspector> g_elementInspector;
+#include "nvapp/elem_inspector.hpp"
+extern std::shared_ptr<nvapp::ElementInspector> g_elementInspector;
 
 enum InspectedBuffers
 {
@@ -88,42 +73,39 @@ enum InspectedBuffers
   eStateOriginal,
   eInstanceWrite,
   eInstanceWriteOriginal,
-  ePartitionWrite,
   ePartitionWriteOriginal,
   eOps,
-  eInstanceIndices,
-  eInstanceIndicesOriginal,
   ePartitionState,
   eInspectedBufferCount
 };
 
 
 #endif
+#include "nvshaders_host/sky.hpp"
+#include "nvapp/application.hpp"
 
 #include "nvvk/acceleration_structures.hpp"
 #include "glm/gtx/spline.hpp"
-#include "nvvk/compute_vk.hpp"
-
-
-#include "imgui/imgui_orient.h"
-#include "nvvkhl/element_profiler.hpp"
-
 
 #include "partitioned_acceleration_structures.hpp"
 
 
+extern std::shared_ptr<nvutils::CameraManipulator> g_cameraManipulator;
+
 //////////////////////////////////////////////////////////////////////////
 /// </summary> Ray trace multiple primitives
-class PartitionedTlasSample : public nvvkhl::IAppElement
+class PartitionedTlasSample : public nvapp::IAppElement
 {
 public:
   PartitionedTlasSample()           = default;
   ~PartitionedTlasSample() override = default;
 
+  VkCommandBuffer createTempCmdBuffer();
+  void            submitAndWaitTempCmdBuffer(VkCommandBuffer cmd);
   // partitioned_tlas.cpp
   //----------------------
   // Application setup
-  void onAttach(nvvkhl::Application* app) override;
+  void onAttach(nvapp::Application* app) override;
   // Application destruction
   void onDetach() override;
   // Main render function
@@ -132,7 +114,10 @@ public:
   // partitioned_tlas_ui.cpp
   //----------------------
   // Reset the GBuffer and image bindings
-  void onResize(uint32_t width, uint32_t height) override;
+  void onResize(VkCommandBuffer cmd, const VkExtent2D& size) override;
+
+  void writeCompositingDescriptors();
+
   // Render the app GUI
   void onUIRender() override;
 
@@ -179,22 +164,27 @@ private:
   // Compile the animation and post-processing shaders
   void recompileAuxShaders();
   // Write the descriptor set for raytracing
-  void writeRtDesc();
+  void writeRaytracingDescriptors();
 
 
-  nvvkhl::Application*             m_app = nullptr;
-  std::unique_ptr<nvvk::DebugUtil> m_dutil;
-#ifdef USE_VMA
-  std::unique_ptr<nvvkhl::AllocVma> m_alloc;
-#else
-  std::unique_ptr<nvvk::ResourceAllocatorDma> m_alloc;
-#endif
-  std::unique_ptr<nvvk::DescriptorSetContainer> m_rtSet;  // Descriptor set
+  nvapp::Application* m_app = nullptr;
 
-  VkFormat                            m_colorFormat = VK_FORMAT_R8G8B8A8_UNORM;  // Color format of the image
-  VkDevice                            m_device      = VK_NULL_HANDLE;
-  std::unique_ptr<nvvkhl::GBuffer>    m_gBuffers;  // G-Buffers
-  nvvkhl_shaders::SimpleSkyParameters m_skyParams{};
+  nvvk::ResourceAllocator m_alloc{};            // Device memory allocator
+  nvvk::StagingUploader   m_stagingUploader{};  // Staging uploader for temporary buffers
+
+  nvvk::ProfilerGpuTimer     m_profilerVK;          // GPU profiler
+  nvvkglsl::GlslCompiler     m_glslCompiler{};      // GLSL compiler for on-the-fly shader compilation
+  nvvk::SamplerPool          m_samplerPool{};       // The sampler pool, used to create a sampler for the texture
+  nvutils::ProfilerTimeline* m_profilerTimeline{};  // Main timeline for the profiler
+
+
+  VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+
+  VkFormat m_colorFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // Color format of the image
+  VkDevice m_device      = VK_NULL_HANDLE;
+
+  nvvk::GBuffer                 m_gBuffers;  // G-Buffers
+  shaderio::SkySimpleParameters m_skyParams{};
 
   // Resources
   struct PrimitiveMeshVk
@@ -208,8 +198,8 @@ private:
   nvvk::Buffer                 m_bMaterials;
   nvvk::Buffer                 m_bSkyParams;
 
-  std::vector<nvvk::AccelKHR> m_blas;  // Bottom-level AS
-  nvvk::AccelKHR              m_tlas;  // Top-level AS
+  std::vector<nvvk::AccelerationStructure> m_blas;  // Bottom-level AS
+  nvvk::AccelerationStructure              m_tlas;  // Top-level AS
 
   // Data and setting
   struct Material
@@ -218,9 +208,9 @@ private:
   };
 
   // Uniques meshes
-  std::vector<nvh::PrimitiveMesh> m_meshes;
+  std::vector<nvutils::PrimitiveMesh> m_meshes;
   // Scene objects
-  std::vector<nvh::Node> m_nodes;
+  std::vector<nvutils::Node> m_nodes;
   // Unique materials
   std::vector<Material> m_materials;
 
@@ -236,11 +226,28 @@ private:
 
 
   // Pipeline
-  DH::PushConstant m_pushConst{};  // Information sent to the shader
+  shaderio::PushConstant m_pushConst{};  // Information sent to the shader
 
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
-  nvvk::SBTWrapper          m_sbt;     // Shading binding table wrapper
-  nvvkhl::PipelineContainer m_rtPipe;  // Hold pipelines and layout
+  nvvk::SBTGenerator m_sbt;        // Shading binding table wrapper
+  nvvk::Buffer       m_sbtBuffer;  // Buffer holding the SBT data
+
+  VkPipeline           m_raytracingPipeline;                        // Main rendering pipeline
+  VkPipelineLayout     m_raytracingPipelineLayout{VK_NULL_HANDLE};  // Pipeline layout for the raytracing pipeline
+  nvvk::DescriptorPack m_raytracingDescriptorPack{};  // Descriptor set containing the raytracing resources
+
+  // Raytracing pipeline components
+  VkRayTracingPipelineCreateInfoKHR m_raytracingPipelineInfo{};
+  enum StageIndices
+  {
+    eRaygen,
+    eMiss,
+    eClosestHit,
+    eShaderGroupCount
+  };
+
+  std::array<VkPipelineShaderStageCreateInfo, eShaderGroupCount> m_raytracingStages{};
+
 
   // Regular TLAS buffers and build data
   nvvk::Buffer                         m_tlasScratchBuffer;
@@ -265,15 +272,20 @@ private:
     eAnimShaderCount
   };
 
-  nvvk::PushComputeDispatcher<DH::AnimationShaderData, uint32_t, eAnimShaderCount> m_animDispatcher;
-  bool                                                                             hasValidAnimationShaders() const;
+
+  std::array<shaderc::SpvCompilationResult, eAnimShaderCount> m_animationShaders;
+  VkPipelineLayout m_animationPipelineLayout{VK_NULL_HANDLE};  // Pipeline layout for the animation shaders
+  std::array<shaderc::SpvCompilationResult, eAnimShaderCount> m_animationShaderModules;
+  std::array<VkPipeline, eAnimShaderCount>                    m_animationPipelines;
+
+  bool hasValidAnimationShaders() const;
 
   // Physics simulation data
-  DH::AnimationShaderData m_animationShaderData{};
-  nvvk::Buffer            m_originalState;  // Initial state of the dominoes
-  nvvk::Buffer            m_state[2];       // Double-buffered current state
-  nvvk::Buffer            m_globalState;    // Global simulation info, also used to keep track of the number of updates
-  nvvk::Buffer            m_globalStateHost;  // Host-side simulation info for UI display
+  shaderio::AnimationShaderData m_animationShaderData{};
+  nvvk::Buffer                  m_originalState;  // Initial state of the dominoes
+  nvvk::Buffer                  m_state[2];       // Double-buffered current state
+  nvvk::Buffer m_globalState;      // Global simulation info, also used to keep track of the number of updates
+  nvvk::Buffer m_globalStateHost;  // Host-side simulation info for UI display
   nvvk::Buffer m_partitionState;  // Buffer keeping track of which partitions are currently touched, for illustration only
   bool m_step = false;            // Run the physics only on the next frame
   bool m_run  = false;            // Run the physics continuously
@@ -289,20 +301,6 @@ private:
   int32_t m_partitionCountPerAxis = 50;
   float   m_sceneSize             = 1000.f;
 #endif
-
-  // Raytracing pipeline components
-  VkRayTracingPipelineCreateInfoKHR m_rayPipelineInfo{};
-  enum StageIndices
-  {
-    eRaygen,
-    eMiss,
-    eClosestHit,
-    eShaderGroupCount
-  };
-
-  std::array<VkPipelineShaderStageCreateInfo, eShaderGroupCount> m_stages{};
-
-  std::array<VkRayTracingShaderGroupCreateInfoKHR, eShaderGroupCount> m_shaderGroups{};
 
 
   uint32_t m_sizeMultiplier = 2;  // Poor man's antialiasing by doubling the render size
@@ -320,8 +318,13 @@ private:
   bool m_tlasRefit = true;
 
   // Final compositing/cell shading
-  nvvk::PushComputeDispatcher<DH::CompositingShaderData, uint32_t, 1> m_compositingDispatcher;
-  bool                                                                m_invalidShaderNotified = false;
+  shaderc::SpvCompilationResult m_compositingShader;
+  VkPipeline                    m_compositingPipeline       = VK_NULL_HANDLE;
+  VkPipelineLayout              m_compositingPipelineLayout = {VK_NULL_HANDLE};
+  nvvk::DescriptorPack          m_compositingDescriptorPack{};  // Descriptor set
+
+
+  bool m_invalidShaderNotified = false;
 
   // Current domino count
   uint32_t m_dominoCount{};
@@ -332,7 +335,6 @@ private:
 
   bool m_scenePropertiesChanged{false};
 
-  nvvk::ShaderModuleManager m_shaderManager;
 
   inline uint32_t partitionIndexFromPosition(const glm::vec3& position) const
   {
@@ -346,8 +348,4 @@ private:
     // The partitions are defined as a simple ground-aligned grid
     return indexX + m_partitionCountPerAxis * indexY;
   }
-
-public:
-  // Profiler, set from outside the app class
-  std::shared_ptr<nvvk::ProfilerVK> m_profilerVK;
 };

@@ -17,10 +17,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "partitioned_tlas.hpp"
 
-#include "nvh/parallel_work.hpp"
 #include <unordered_map>
+
+#include "nvutils/parallel_work.hpp"
+#include "partitioned_tlas.hpp"
+#include "partitioned_acceleration_structures.hpp"
 
 static void memoryBarrier(VkCommandBuffer cmd)
 {
@@ -38,20 +40,20 @@ static void memoryBarrier(VkCommandBuffer cmd)
 //--------------------------------------------------------------------------------------------------
 // Converting a PrimitiveMesh as input for BLAS
 //
-static nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvh::PrimitiveMesh& prim,
-                                                                   VkDeviceAddress           vertexAddress,
-                                                                   VkDeviceAddress           indexAddress)
+static nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvutils::PrimitiveMesh& prim,
+                                                                   VkDeviceAddress               vertexAddress,
+                                                                   VkDeviceAddress               indexAddress)
 {
   nvvk::AccelerationStructureGeometryInfo result;
-  const auto                              triangleCount = static_cast<uint32_t>(prim.triangles.size());
+  const uint32_t                          triangleCount = uint32_t(prim.triangles.size());
 
   // Describe buffer as array of VertexObj.
   VkAccelerationStructureGeometryTrianglesDataKHR triangles{
       .sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
       .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,  // vec3 vertex position data
       .vertexData   = {.deviceAddress = vertexAddress},
-      .vertexStride = sizeof(nvh::PrimitiveVertex),
-      .maxVertex    = static_cast<uint32_t>(prim.vertices.size()) - 1,
+      .vertexStride = sizeof(nvutils::PrimitiveVertex),
+      .maxVertex    = uint32_t(prim.vertices.size()) - 1,
       .indexType    = VK_INDEX_TYPE_UINT32,
       .indexData    = {.deviceAddress = indexAddress},
   };
@@ -79,44 +81,47 @@ static nvvk::AccelerationStructureGeometryInfo primitiveToGeometry(const nvh::Pr
 //
 void PartitionedTlasSample::createBottomLevelAS()
 {
-  nvh::ScopedTimer st(__FUNCTION__);
+  nvutils::ScopedTimer st(__FUNCTION__);
 
-  size_t numMeshes = m_meshes.size();
+  size_t meshCount = m_meshes.size();
 
   // BLAS - Storing each primitive in a geometry
-  std::vector<nvvk::AccelerationStructureBuildData> blasBuildData(numMeshes);
-  m_blas.resize(numMeshes);  // All BLAS
+  std::vector<nvvk::AccelerationStructureBuildData> blasBuildData(meshCount);
+  m_blas.resize(meshCount);  // All BLAS
 
   // Get the build information for all the BLAS
   VkDeviceSize maxScratchSize = 0;
-  for(uint32_t p_idx = 0; p_idx < numMeshes; p_idx++)
+  for(uint32_t meshIndex = 0; meshIndex < meshCount; meshIndex++)
   {
-    const VkDeviceAddress vertex_address = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].vertices.buffer);
-    const VkDeviceAddress index_address  = nvvk::getBufferDeviceAddress(m_device, m_bMeshes[p_idx].indices.buffer);
-    blasBuildData[p_idx].asType          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    blasBuildData[p_idx].addGeometry(primitiveToGeometry(m_meshes[p_idx], vertex_address, index_address));
+    const VkDeviceAddress vertexAddress = m_bMeshes[meshIndex].vertices.address;
+    const VkDeviceAddress indexAddress  = m_bMeshes[meshIndex].indices.address;
+    blasBuildData[meshIndex].asType     = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    blasBuildData[meshIndex].addGeometry(primitiveToGeometry(m_meshes[meshIndex], vertexAddress, indexAddress));
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo =
-        blasBuildData[p_idx].finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
+        blasBuildData[meshIndex].finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR);
     maxScratchSize = std::max(maxScratchSize, sizeInfo.buildScratchSize);
   }
 
   // Create the scratch buffer
-  nvvk::Buffer scratchBuffer =
-      m_alloc->createBuffer(maxScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  nvvk::Buffer scratchBuffer;
+  // Force proper alignment by using VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+  NVVK_CHECK(m_alloc.createBuffer(scratchBuffer, maxScratchSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
   // Create the acceleration structures
   VkCommandBuffer cmd = m_app->createTempCmdBuffer();
   {
-    for(uint32_t p_idx = 0; p_idx < numMeshes; p_idx++)
+    for(uint32_t meshIndex = 0; meshIndex < meshCount; meshIndex++)
     {
-      m_blas[p_idx] = m_alloc->createAcceleration(blasBuildData[p_idx].makeCreateInfo());
-      blasBuildData[p_idx].cmdBuildAccelerationStructure(cmd, m_blas[p_idx].accel, scratchBuffer.address);
+      NVVK_CHECK(m_alloc.createAcceleration(m_blas[meshIndex], blasBuildData[meshIndex].makeCreateInfo()));
+      blasBuildData[meshIndex].cmdBuildAccelerationStructure(cmd, m_blas[meshIndex].accel, scratchBuffer.address);
     }
   }
   m_app->submitAndWaitTempCmdBuffer(cmd);
 
   // Cleanup
-  m_alloc->destroy(scratchBuffer);
+  m_alloc.destroyBuffer(scratchBuffer);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -124,19 +129,19 @@ void PartitionedTlasSample::createBottomLevelAS()
 //
 void PartitionedTlasSample::createTopLevelAS()
 {
-  nvh::ScopedTimer st(__FUNCTION__);
+  nvutils::ScopedTimer st(__FUNCTION__);
 
   std::vector<VkAccelerationStructureInstanceKHR> tlasInstances;
   tlasInstances.resize(m_nodes.size());
-  uint32_t numThreads = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
-  nvh::parallel_batches(
+  uint32_t threadCount = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
+  nvutils::parallel_batches(
       m_nodes.size(),
       [&](uint64_t i) {
-        auto& node = m_nodes[i];
+        nvutils::Node& node = m_nodes[i];
 
         VkAccelerationStructureInstanceKHR instance{
             .transform           = nvvk::toTransformMatrixKHR(node.localMatrix()),  // Position of the instance
-            .instanceCustomIndex = static_cast<uint32_t>(node.mesh),                // gl_InstanceCustomIndexEX
+            .instanceCustomIndex = uint32_t(node.mesh),                             // gl_InstanceCustomIndexEX
             .mask                = 0xFF,                                            // All objects
             .instanceShaderBindingTableRecordOffset = 0,  // We will use the same hit group for all object
             .flags                                  = {},
@@ -144,14 +149,18 @@ void PartitionedTlasSample::createTopLevelAS()
         };
         tlasInstances[i] = instance;
       },
-      numThreads);
+      threadCount);
 
   VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
   // Create the instances buffer, add a barrier to ensure the data is copied before the TLAS build
-  m_instancesBuffer = m_alloc->createBuffer(cmd, tlasInstances,
-                                            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                                | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(m_instancesBuffer, std::span(tlasInstances).size_bytes(),
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+  NVVK_CHECK(m_stagingUploader.appendBuffer(m_instancesBuffer, 0, std::span(tlasInstances)));
+  NVVK_DBG_NAME(m_instancesBuffer.buffer);
+  m_stagingUploader.cmdUploadAppended(cmd);
+
   nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
   m_tlasBuildData.asType = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
@@ -160,8 +169,9 @@ void PartitionedTlasSample::createTopLevelAS()
       m_tlasBuildData.makeInstanceGeometry(tlasInstances.size(), m_instancesBuffer.address);
   m_tlasBuildData.addGeometry(geometryInfo);
   // Get the size of the TLAS
-  auto sizeInfo = m_tlasBuildData.finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                                                                 | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR);
+  VkAccelerationStructureBuildSizesInfoKHR sizeInfo =
+      m_tlasBuildData.finalizeGeometry(m_device, VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                                                     | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR);
 
   if(sizeInfo.accelerationStructureSize == ~VkDeviceSize(0) || sizeInfo.buildScratchSize == ~VkDeviceSize(0))
   {
@@ -173,21 +183,20 @@ void PartitionedTlasSample::createTopLevelAS()
   m_stats.tlasBuildScratchSize          = sizeInfo.buildScratchSize;
 
   // Create the scratch buffer
-  m_tlasScratchBuffer = m_alloc->createBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                             | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(m_tlasScratchBuffer, sizeInfo.buildScratchSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
   // Create the TLAS
-  m_tlas = m_alloc->createAcceleration(m_tlasBuildData.makeCreateInfo());
+  NVVK_CHECK(m_alloc.createAcceleration(m_tlas, m_tlasBuildData.makeCreateInfo()));
   m_tlasBuildData.cmdBuildAccelerationStructure(cmd, m_tlas.accel, m_tlasScratchBuffer.address);
   m_app->submitAndWaitTempCmdBuffer(cmd);
-
-  m_alloc->finalizeAndReleaseStaging();
 }
 
 // Create a partitions acceleration structure from the scene BLAS'es
 void PartitionedTlasSample::createPartitionedTopLevelAS()
 {
-  nvh::ScopedTimer st(__FUNCTION__);
+  nvutils::ScopedTimer st(__FUNCTION__);
   // The partitions are defined on a simple grid
   uint32_t partitionCount = m_partitionCountPerAxis * m_partitionCountPerAxis + 1;  // +1 is for the ground plane
 
@@ -196,7 +205,7 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
 
   // Build the instance information for each domino, and add them to their respective partitions
   std::vector<VkPartitionedAccelerationStructureWriteInstanceDataNV> instances;
-  std::unordered_map<uint32_t, uint32_t>                              partitionSizes;
+  std::unordered_map<uint32_t, uint32_t>                             partitionSizes;
 
   instances.reserve(m_nodes.size());
 
@@ -215,13 +224,13 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
     instances.push_back({});
   }
 
-  uint32_t numThreads = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
+  uint32_t threadCount = std::min((uint32_t)m_nodes.size(), std::thread::hardware_concurrency());
 
 
-  nvh::parallel_batches(
+  nvutils::parallel_batches(
       m_nodes.size(),
       [&](uint64_t i) {
-        nvh::Node&                                             node = m_nodes[i];
+        nvutils::Node&                                        node = m_nodes[i];
         VkPartitionedAccelerationStructureWriteInstanceDataNV instanceData{};
         instanceData.transform                           = nvvk::toTransformMatrixKHR(node.localMatrix());
         instanceData.instanceID                          = uint32_t(i);
@@ -232,7 +241,7 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
         instanceData.partitionIndex                      = m_partitionIndexPerNode[i];
         instances[i]                                     = instanceData;
       },
-      numThreads);
+      threadCount);
 
 
   for(auto count : partitionSizes)
@@ -262,37 +271,43 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
   // Allocate the buffers for PTLAS storage
   nvvk::PartitionedAccelerationStructure::Buffers buffers;
 
-  buffers.accelerationStructure =
-      m_alloc->createBuffer(sizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                                                    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-  buffers.buildScratch = m_alloc->createBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(buffers.accelerationStructure, sizeInfo.accelerationStructureSize,
+                                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                                      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+
+  NVVK_CHECK(m_alloc.createBuffer(buffers.buildScratch, sizeInfo.buildScratchSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
   if(sizeInfo.updateScratchSize != 0)
   {
-    buffers.updateScratch = m_alloc->createBuffer(sizeInfo.updateScratchSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    NVVK_CHECK(m_alloc.createBuffer(buffers.updateScratch, sizeInfo.updateScratchSize,
+                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
   }
 
 
-  buffers.operationsInfo = m_alloc->createBuffer(sizeInfo.operationInfoSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                                 | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(buffers.operationsInfo, sizeInfo.operationInfoSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
 
-  buffers.operationsCount = m_alloc->createBuffer(sizeInfo.operationCountSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                                   | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(buffers.operationsCount, sizeInfo.operationCountSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
 
-  buffers.instanceWriteInfo = m_alloc->createBuffer(sizeInfo.instanceWriteInfoSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                                        | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+  NVVK_CHECK(m_alloc.createBuffer(buffers.instanceWriteInfo, sizeInfo.instanceWriteInfoSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
 
   if(sizeInfo.instanceUpdateInfoSize > 0)
   {
-    buffers.instanceUpdateInfo = m_alloc->createBuffer(sizeInfo.instanceUpdateInfoSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                                            | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    NVVK_CHECK(m_alloc.createBuffer(buffers.instanceUpdateInfo, sizeInfo.instanceUpdateInfoSize,
+                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
   }
 
   if(sizeInfo.partitionWriteInfoSize > 0)
   {
-    buffers.partitionWriteInfo = m_alloc->createBuffer(sizeInfo.partitionWriteInfoSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                                                                            | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    NVVK_CHECK(m_alloc.createBuffer(buffers.partitionWriteInfo, sizeInfo.partitionWriteInfoSize,
+                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
   }
 
 
@@ -306,7 +321,7 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
   {
     VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
-    m_ptlas.uploadPtlasData(m_alloc.get(), cmd, instances);
+    m_ptlas.uploadPtlasData(&m_stagingUploader, cmd, instances);
 
     memoryBarrier(cmd);
 
@@ -315,41 +330,25 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
 
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
-  m_alloc->releaseStaging();
+
 
   // Allocate a buffer to store the dynamic instance updates during animation
-  m_partitionedTlasInstanceWriteDynamic =
-      m_alloc->createBuffer(sizeInfo.instanceWriteInfoSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+  NVVK_CHECK(m_alloc.createBuffer(m_partitionedTlasInstanceWriteDynamic, sizeInfo.instanceWriteInfoSize,
+                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
 
 #ifdef USE_NVVK_INSPECTOR
+  if(m_ptlas.getBuffers().partitionWriteInfo.buffer != VK_NULL_HANDLE)
   {
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount = sizeInfo.partitionWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWritePartitionDataNV);
-    info.format     = g_elementInspector->formatStruct(
-        "struct VkPartitionedAccelerationStructureWritePartitionDataNV\
+    nvapp::ElementInspector::BufferInspectionInfo info{};
+    info.entryCount =
+        uint32_t(sizeInfo.partitionWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWritePartitionTranslationDataNV));
+    info.format = g_elementInspector->formatStruct(
+        "struct VkPartitionedAccelerationStructureWritePartitionTranslationDataNV\
   {\
     uint32_t        partitionIndex;\
-    vec3           partitionTranslation;\
-    uint32_t        instanceCount;\
-    uint32_t        instanceIndicesStrideInBytes;\
-    uint64_t instanceIndices;\
-  }");
-    info.name         = "partition write";
-    info.sourceBuffer = m_partitionedTlasPartitionWriteDynamicWholeState.buffer;
-    g_elementInspector->initBufferInspection(ePartitionWrite, info);
-  }
-
-  {
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount = sizeInfo.partitionWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWritePartitionDataNV);
-    info.format     = g_elementInspector->formatStruct(
-        "struct VkPartitionedAccelerationStructureWritePartitionDataNV\
-  {\
-    uint32_t        partitionIndex;\
-    vec3           partitionTranslation;\
-    uint32_t        instanceCount;\
-    uint32_t        instanceIndicesStrideInBytes;\
-    uint64_t instanceIndices;\
+    float       partitionTranslation[3];\
   }");
     info.name         = "partition write original";
     info.sourceBuffer = m_ptlas.getBuffers().partitionWriteInfo.buffer;
@@ -358,19 +357,20 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
 
 
   {
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount = sizeInfo.instanceWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWriteInstanceDataNV);
-    info.format     = g_elementInspector->formatStruct(
+    nvapp::ElementInspector::BufferInspectionInfo info{};
+    info.entryCount = uint32_t(sizeInfo.instanceWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWriteInstanceDataNV));
+    info.format = g_elementInspector->formatStruct(
         "struct PartitionedAccelerationStructureWriteInstanceDataNV\
     {\
-      mat3x4 transform;\
-      vec3    explicitAABBMin;\
-      vec3    explicitAABBMax;\
-      uint32_t instanceIDInstanceMask;\
-      uint32_t instanceContributionToHitGroupIndex;\
-      uint32_t instanceFlags;\
-      uint32_t                                         instanceIndex;\
-      uint64_t                                    accelerationStructure;\
+      mat3x4      transform;\
+      float       explicitAABB[6];\
+      uint32_t    instanceID;\
+      uint32_t    instanceMask;\
+      uint32_t    instanceContributionToHitGroupIndex;\
+      uint32_t    instanceFlags;\
+      uint32_t    instanceIndex;\
+      uint32_t    partitionIndex;\
+      uint64_t    accelerationStructure;\
     }");
     info.name         = "instance write";
     info.sourceBuffer = m_partitionedTlasInstanceWriteDynamic.buffer;
@@ -378,19 +378,20 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
   }
 
   {
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount = sizeInfo.instanceWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWriteInstanceDataNV);
-    info.format     = g_elementInspector->formatStruct(
+    nvapp::ElementInspector::BufferInspectionInfo info{};
+    info.entryCount = uint32_t(sizeInfo.instanceWriteInfoSize / sizeof(VkPartitionedAccelerationStructureWriteInstanceDataNV));
+    info.format = g_elementInspector->formatStruct(
         "struct PartitionedAccelerationStructureWriteInstanceDataNV\
     {\
-      mat3x4 transform;\
-      vec3    explicitAABBMin;\
-      vec3    explicitAABBMax;\
-      uint32_t instanceIDInstanceMask;\
-      uint32_t instanceContributionToHitGroupIndex;\
-      uint32_t instanceFlags;\
-      uint32_t                                         instanceIndex;\
-      uint64_t                                    accelerationStructure;\
+      mat3x4                                               transform;\
+      float                                                explicitAABB[6];\
+      uint32_t                                             instanceID;\
+      uint32_t                                             instanceMask;\
+      uint32_t                                             instanceContributionToHitGroupIndex;\
+      uint32_t    instanceFlags;\
+      uint32_t                                             instanceIndex;\
+      uint32_t                                             partitionIndex;\
+      uint64_t                                              accelerationStructure;\
     }");
     info.name         = "instance write original";
     info.sourceBuffer = m_ptlas.getBuffers().instanceWriteInfo.buffer;
@@ -399,40 +400,19 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
 
   {
 
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount = 2;
-    info.format     = g_elementInspector->formatStruct(
+    nvapp::ElementInspector::BufferInspectionInfo info{};
+    info.entryCount = uint32_t(sizeInfo.operationInfoSize / sizeof(VkBuildPartitionedAccelerationStructureIndirectCommandNV));
+    info.format = g_elementInspector->formatStruct(
         "struct VkBuildPartitionedAccelerationStructureIndirectCommandNV\
     {\
       uint32_t opType;\
       uint32_t                                    argCount;\
-      u64vec2                   argData;\
+      uint64_t                   argData;\
     }");
     info.name         = "ops";
     info.sourceBuffer = buffers.operationsInfo.buffer;
     g_elementInspector->initBufferInspection(eOps, info);
   }
-
-  {
-
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount   = sizeInfo.instanceIndicesSize / sizeof(uint32_t);
-    info.format       = g_elementInspector->formatUint32();
-    info.name         = "instanceIndices";
-    info.sourceBuffer = buffers.instanceIndices.buffer;
-    g_elementInspector->initBufferInspection(eInstanceIndices, info);
-  }
-
-  {
-
-    nvvkhl::ElementInspector::BufferInspectionInfo info{};
-    info.entryCount   = sizeInfo.instanceIndicesSize / sizeof(uint32_t);
-    info.format       = g_elementInspector->formatUint32();
-    info.name         = "instanceIndices original";
-    info.sourceBuffer = m_partitionedTlasInstanceListOriginal.buffer;
-    g_elementInspector->initBufferInspection(eInstanceIndicesOriginal, info);
-  }
-
 
 #endif
 }
