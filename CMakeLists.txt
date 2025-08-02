@@ -42,8 +42,8 @@ add_project_definitions(${PROJECT_NAME})
 # Include directory for generated files
 target_include_directories(${PROJECT_NAME} PRIVATE 
     ${CMAKE_BINARY_DIR} 
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/shaders
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
 )
 
 #------------------------------------------------------------------------------------------------------------------------------
