@@ -137,16 +137,14 @@ void PartitionedTlasSample::onAttach(nvapp::Application* app)
   {
     std::vector<std::filesystem::path> shaderSearchPaths;
     std::filesystem::path              exePath = nvutils::getExecutablePath().parent_path();
-    std::filesystem::path              exeName = nvutils::getExecutablePath().stem();
 
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / "shaders"));
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_SOURCE_DIRECTORY)));
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / std::filesystem::path("../") / "shaders"));
-
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_SOURCE_DIRECTORY) / "shaders"));
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_NVSHADERS_DIRECTORY)));
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / std::filesystem::path(PROJECT_EXE_TO_ROOT_DIRECTORY) / "common"));
-    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / exeName / "shaders"));
+    // Build paths
+    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / TARGET_EXE_TO_SOURCE_DIRECTORY / "shaders"));
+    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / TARGET_EXE_TO_SOURCE_DIRECTORY));
+    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / TARGET_EXE_TO_NVSHADERS_DIRECTORY));
+    // Install paths
+    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / TARGET_NAME "_files" / "shaders"));
+    shaderSearchPaths.push_back(std::filesystem::absolute(exePath / TARGET_NAME "_files"));
     shaderSearchPaths.push_back(std::filesystem::absolute(exePath));
 
     m_glslCompiler.addSearchPaths(shaderSearchPaths);
@@ -302,7 +300,7 @@ void PartitionedTlasSample::onRender(VkCommandBuffer cmd)
   vkCmdUpdateBuffer(cmd, m_bSkyParams.buffer, 0, sizeof(shaderio::SkySimpleParameters), &m_skyParams);  // Update the sky
   memoryBarrier(cmd);  // Make sure the data has moved to device before rendering
 
-  m_animationShaderData.eyePosition    = g_cameraManipulator->getEye();
+  m_animationShaderData.eyePosition = g_cameraManipulator->getEye();
   m_animationShaderData.partitionCount = m_partitionCountPerAxis * m_partitionCountPerAxis + 1;  // +1 for the global partition
 
   if(m_step || m_run)
@@ -723,7 +721,7 @@ int main(int argc, char** argv)
 
 
   // Application creation setup
-  appInfo.name           = fmt::format("{}", PROJECT_NAME);
+  appInfo.name           = TARGET_NAME;
   appInfo.instance       = vkContext.getInstance();
   appInfo.device         = vkContext.getDevice();
   appInfo.physicalDevice = vkContext.getPhysicalDevice();
