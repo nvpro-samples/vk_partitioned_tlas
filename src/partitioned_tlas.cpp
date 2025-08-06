@@ -55,6 +55,7 @@ std::shared_ptr<nvapp::ElementInspector> g_elementInspector;
 #include <nvutils/parameter_parser.hpp>
 #include <nvutils/parameter_registry.hpp>
 #include <nvvk/validation_settings.hpp>
+#include "nvapp/elem_logger.hpp"
 
 nvutils::ProfilerManager                    g_profilerManager;  // #PROFILER
 std::shared_ptr<nvutils::CameraManipulator> g_cameraManipulator;
@@ -650,6 +651,10 @@ int main(int argc, char** argv)
   // Parsing command line parameters
   nvutils::ParameterRegistry parameterRegistry;
 
+  parameterRegistry.add({"validation"}, &vkSetup.enableValidationLayers);
+  parameterRegistry.add({"vsync"}, &appInfo.vSync);
+  parameterRegistry.add({"device", "force a vulkan device via index into the device list"}, &vkSetup.forceGPU);
+
 
   vkSetup.apiVersion = VK_API_VERSION_1_4;
   // clang-format off
@@ -703,14 +708,17 @@ int main(int argc, char** argv)
   nvvk::CheckError::getInstance().setCallbackFunction([&](VkResult result) { aftermath.errorCallback(result); });
 #endif
 
-  vkSetup.enableValidationLayers = true;
+
   nvvk::ValidationSettings validation{};
-  validation.setPreset(nvvk::ValidationSettings::LayerPresets::eStandard);
-  validation.printf_to_stdout  = VK_TRUE;
-  validation.message_id_filter = {"VUID-VkWriteDescriptorSet-descriptorType-00319",
-                                  "Undefined-Value-StorageImage-FormatMismatch-ImageView"};
-  validation.unique_handles = VK_FALSE;  // Disable unique handles, as we use the same descriptor set for multiple pipelines
-  vkSetup.instanceCreateInfoExt = validation.buildPNextChain();
+  if(vkSetup.enableValidationLayers)
+  {
+    validation.setPreset(nvvk::ValidationSettings::LayerPresets::eStandard);
+    validation.printf_to_stdout  = VK_TRUE;
+    validation.message_id_filter = {"VUID-VkWriteDescriptorSet-descriptorType-00319",
+                                    "Undefined-Value-StorageImage-FormatMismatch-ImageView"};
+    validation.unique_handles = VK_FALSE;  // Disable unique handles, as we use the same descriptor set for multiple pipelines
+    vkSetup.instanceCreateInfoExt = validation.buildPNextChain();
+  }
 
   // Create the Vulkan context
   if(vkContext.init(vkSetup) != VK_SUCCESS)
@@ -728,10 +736,28 @@ int main(int argc, char** argv)
   appInfo.queues         = vkContext.getQueueInfos();
 
 
+  appInfo.dockSetup = [](ImGuiID viewportID) {
+    // right side panel container
+    ImGuiID settingID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.25F, nullptr, &viewportID);
+    ImGui::DockBuilderDockWindow("Settings", settingID);
+
+    // bottom panel container
+    ImGuiID loggerID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Down, 0.35F, nullptr, &viewportID);
+    ImGui::DockBuilderDockWindow("Log", loggerID);
+    ImGuiID profilerID = ImGui::DockBuilderSplitNode(loggerID, ImGuiDir_Right, 0.75F, nullptr, &loggerID);
+    ImGui::DockBuilderDockWindow("Profiler", profilerID);
+  };
+
   // Create application
   nvapp::Application application;
   application.init(appInfo);
 
+
+  auto                  logger      = std::make_shared<nvapp::ElementLogger>(true);
+  nvapp::ElementLogger* loggerDeref = logger.get();
+  nvutils::Logger::getInstance().setLogCallback([&](nvutils::Logger::LogLevel logLevel, const std::string& text) {
+    loggerDeref->addLog(logLevel, "%s", text.c_str());
+  });
 
   auto partitionedTlas = std::make_shared<PartitionedTlasSample>();
 
@@ -767,9 +793,11 @@ int main(int argc, char** argv)
 #endif
 
   application.addElement(partitionedTlas);
+  application.addElement(logger);
 
-  application.setVsync(true);
   application.run();
+
+  nvutils::Logger::getInstance().setLogCallback(nullptr);
 
   application.deinit();
   vkContext.deinit();

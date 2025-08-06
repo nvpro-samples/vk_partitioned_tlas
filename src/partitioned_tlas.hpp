@@ -288,7 +288,7 @@ private:
   nvvk::Buffer m_globalStateHost;  // Host-side simulation info for UI display
   nvvk::Buffer m_partitionState;  // Buffer keeping track of which partitions are currently touched, for illustration only
   bool m_step = false;            // Run the physics only on the next frame
-  bool m_run  = false;            // Run the physics continuously
+  bool m_run  = true;            // Run the physics continuously
 
   float m_simulationSpeed = 4.f;  // Simulation speed, better leave it at that value
   float m_timeStep = 0.01f;  // Time step per simulation step, better fixed to make the simulation accuracy independent from the frame rate
@@ -331,7 +331,7 @@ private:
   // Anticipated domino count for the current regeneration parameters
   uint32_t m_generateDominoCount{};
   // Number of dominoes to automatically topple when animation starts
-  int32_t m_targetToppleSeedCount{-1};
+  int32_t m_targetToppleSeedCount{2000};
 
   bool m_scenePropertiesChanged{false};
 
