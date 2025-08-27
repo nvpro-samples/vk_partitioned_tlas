@@ -488,7 +488,7 @@ void PartitionedTlasSample::onRender(VkCommandBuffer cmd)
   {
     auto timerSection = m_profilerVK.cmdFrameSection(cmd, "Render");
     // Ray trace
-    std::vector<VkDescriptorSet> desc_sets{m_raytracingDescriptorPack.sets};
+    const std::vector<VkDescriptorSet>& desc_sets = m_raytracingDescriptorPack.getSets();
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipelineLayout, 0,
                             (uint32_t)desc_sets.size(), desc_sets.data(), 0, nullptr);
@@ -520,7 +520,7 @@ void PartitionedTlasSample::onRender(VkCommandBuffer cmd)
         {
           vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_compositingPipeline);
           vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_compositingPipelineLayout, 0, 1,
-                                  m_compositingDescriptorPack.sets.data(), 0, nullptr);
+                                  m_compositingDescriptorPack.getSetPtr(), 0, nullptr);
           vkCmdPushConstants(cmd, m_compositingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                              sizeof(shaderio::CompositingShaderData), &compositingShaderData);
 
