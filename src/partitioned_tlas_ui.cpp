@@ -64,25 +64,23 @@ void PartitionedTlasSample::onUIRender()
 
 
     ImGui::Text("Right-click on a domino to topple it");
-    ImGui::PushFont(nvgui::getIconicFont());
 
     if(m_run)
     {
-      if(ImGui::Button(nvgui::icon_media_pause, ImVec2(32, 32)))
+      if(ImGui::Button(ICON_MS_PAUSE, ImVec2(32, 32)))
       {
         m_run = false;
       }
     }
     else
     {
-      if(ImGui::Button(nvgui::icon_media_play, ImVec2(32, 32)))
+      if(ImGui::Button(ICON_MS_PLAY_ARROW, ImVec2(32, 32)))
       {
         m_run = true;
       }
     }
 
 
-    ImGui::PopFont();
     if(ImGui::IsItemHovered() && ImGui::BeginTooltip())
     {
 
@@ -92,25 +90,20 @@ void PartitionedTlasSample::onUIRender()
 
 
     ImGui::SameLine();
-
-    ImGui::PushFont(nvgui::getIconicFont());
-    if(ImGui::Button(nvgui::icon_media_stop, ImVec2(32, 32)))
+    if(ImGui::Button(ICON_MS_STOP, ImVec2(32, 32)))
     {
       vkDeviceWaitIdle(m_device);
       m_animationShaderData.resetToOriginal = 1;
       m_step                                = true;
       m_run                                 = false;
     }
-    ImGui::PopFont();
     tooltip("Stop physics & reset the dominoes");
 
     ImGui::SameLine();
-    ImGui::PushFont(nvgui::getIconicFont());
-    if(ImGui::Button(nvgui::icon_media_step_forward, ImVec2(32, 32)))
+    if(ImGui::Button(ICON_MS_STEP, ImVec2(32, 32)))
     {
       m_step = true;
     }
-    ImGui::PopFont();
     tooltip("Step physics");
 
 
