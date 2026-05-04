@@ -61,12 +61,6 @@ int32_t increment(int32_t existing)
 }
 
 
-float noise(float x)
-{
-  return fract(sin(x) * 43758.5453);
-}
-
-
 vec3 medianFilter(ivec2 coord)
 {
   // Offset values for neighboring pixels
@@ -273,7 +267,6 @@ void main()
 
     const vec4  edgeColor       = vec4(0.2, 0.2, 0.15, 1.0);
     const vec4  backgroundColor = vec4(1, 0.95, 0.85, 1);
-    const float noiseAmount     = 0.00;
     const float errorPeriod     = 30.0;
     float       errorRange      = 0.001;
 
@@ -292,11 +285,10 @@ void main()
       errorRange = 0.f;
     }
 
-    float noise = uv.x * noiseAmount;
     vec2  uvs[3];
-    uvs[0] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 0.0) + noise, errorRange * sin(errorPeriod * uv.x + 0.0) + noise);
-    uvs[1] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 1.047) + noise, errorRange * sin(errorPeriod * uv.x + 3.142) + noise);
-    uvs[2] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 2.094) + noise, errorRange * sin(errorPeriod * uv.x + 1.571) + noise);
+    uvs[0] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 0.0), errorRange * sin(errorPeriod * uv.x + 0.0));
+    uvs[1] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 1.047), errorRange * sin(errorPeriod * uv.x + 3.142));
+    uvs[2] = uv + vec2(errorRange * sin(errorPeriod * uv.y + 2.094), errorRange * sin(errorPeriod * uv.x + 1.571));
 
     float e0 = imageLoad(image, ivec2(uvs[0] * vec2(resX, resY))).w;
     float e1 = imageLoad(image, ivec2(uvs[1] * vec2(resX, resY))).w;

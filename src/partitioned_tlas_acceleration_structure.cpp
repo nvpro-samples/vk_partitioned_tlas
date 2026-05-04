@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -271,43 +271,46 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
   // Allocate the buffers for PTLAS storage
   nvvk::PartitionedAccelerationStructure::Buffers buffers;
 
+  // We need to be able to get the address of all buffers here. In addition,
+  // when the inspector is active, we need to be able to transfer from them.
+  const VkBufferUsageFlags baseFlags = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+#ifdef USE_NVVK_INSPECTOR
+                                       | VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+#endif
+      ;
 
   NVVK_CHECK(m_alloc.createBuffer(buffers.accelerationStructure, sizeInfo.accelerationStructureSize,
-                                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                                      | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                  baseFlags | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
-  NVVK_CHECK(m_alloc.createBuffer(buffers.buildScratch, sizeInfo.buildScratchSize,
-                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+  NVVK_CHECK(m_alloc.createBuffer(buffers.buildScratch, sizeInfo.buildScratchSize, baseFlags | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
 
   if(sizeInfo.updateScratchSize != 0)
   {
-    NVVK_CHECK(m_alloc.createBuffer(buffers.updateScratch, sizeInfo.updateScratchSize,
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+    NVVK_CHECK(m_alloc.createBuffer(buffers.updateScratch, sizeInfo.updateScratchSize, baseFlags | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
   }
 
 
   NVVK_CHECK(m_alloc.createBuffer(buffers.operationsInfo, sizeInfo.operationInfoSize,
-                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                  baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
 
   NVVK_CHECK(m_alloc.createBuffer(buffers.operationsCount, sizeInfo.operationCountSize,
-                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
+                                  baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+                                      | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
 
   NVVK_CHECK(m_alloc.createBuffer(buffers.instanceWriteInfo, sizeInfo.instanceWriteInfoSize,
-                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                  baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
 
   if(sizeInfo.instanceUpdateInfoSize > 0)
   {
     NVVK_CHECK(m_alloc.createBuffer(buffers.instanceUpdateInfo, sizeInfo.instanceUpdateInfoSize,
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
+                                    baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
   }
 
   if(sizeInfo.partitionWriteInfoSize > 0)
   {
     NVVK_CHECK(m_alloc.createBuffer(buffers.partitionWriteInfo, sizeInfo.partitionWriteInfoSize,
-                                    VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                    baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
   }
 
 
@@ -335,8 +338,7 @@ void PartitionedTlasSample::createPartitionedTopLevelAS()
   // Allocate a buffer to store the dynamic instance updates during animation
 
   NVVK_CHECK(m_alloc.createBuffer(m_partitionedTlasInstanceWriteDynamic, sizeInfo.instanceWriteInfoSize,
-                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-                                      | VK_BUFFER_USAGE_TRANSFER_SRC_BIT));
+                                  baseFlags | VK_BUFFER_USAGE_TRANSFER_DST_BIT));
 
 #ifdef USE_NVVK_INSPECTOR
   if(m_ptlas.getBuffers().partitionWriteInfo.buffer != VK_NULL_HANDLE)
